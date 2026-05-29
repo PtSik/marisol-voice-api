@@ -1,0 +1,10 @@
+node_modules/
+.wrangler/
+dist/
+.env
+.env.local
+*.local
+.dev.vars
+
+# Research notes — ephemeral, not maintained docs
+docs/research/

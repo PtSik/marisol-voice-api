@@ -1,0 +1,22 @@
+name = "voice-agent-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+workers_dev = true
+minify = true
+
+[observability]
+enabled = true
+
+[vars]
+SUPABASE_URL = "https://ypvlndfdszdinvpebumb.supabase.co"
+ENVIRONMENT = "development"
+
+# Secrets — set via: wrangler secret put <NAME>
+# SUPABASE_SERVICE_ROLE_KEY
+# ELEVENLABS_WEBHOOK_SECRET
+# ELEVENLABS_API_KEY
+# ELEVENLABS_TEMPLATE_AGENT_ID
+# TWILIO_ACCOUNT_SID
+# TWILIO_AUTH_TOKEN
+# ENCRYPTION_KEY  (32-byte hex string for AES-256-GCM)
+# ADMIN_API_KEYS  (comma-separated list of bearer tokens)

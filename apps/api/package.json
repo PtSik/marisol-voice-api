@@ -1,0 +1,24 @@
+{
+  "name": "@voice-agent/api",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src/",
+    "format": "biome format --write src/"
+  },
+  "dependencies": {
+    "hono": "^4.6.0",
+    "@supabase/supabase-js": "^2.45.0",
+    "@sentry/cloudflare": "^8.0.0",
+    "libphonenumber-js": "^1.11.0"
+  },
+  "devDependencies": {
+    "wrangler": "^3.80.0",
+    "@cloudflare/workers-types": "^4.20241022.0",
+    "typescript": "^5.6.0",
+    "@biomejs/biome": "^1.9.0"
+  }
+}
