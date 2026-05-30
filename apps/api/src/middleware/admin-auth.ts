@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
+import { timingSafeEqual } from '../lib/crypto';
 
 export interface AdminAuthBindings {
   ADMIN_API_KEYS: string;
@@ -14,7 +15,7 @@ export function adminAuth(): MiddlewareHandler<{ Bindings: AdminAuthBindings }> 
 
     const token = authHeader.slice(7);
     const validKeys = c.env.ADMIN_API_KEYS.split(',').map((k) => k.trim());
-    if (!validKeys.includes(token)) {
+    if (!validKeys.some((k) => timingSafeEqual(k, token))) {
       return c.json({ error: 'Invalid API key' }, 401);
     }
 

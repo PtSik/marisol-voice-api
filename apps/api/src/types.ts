@@ -212,6 +212,7 @@ export interface BookingRow {
   end_at: string;
   status: string;
   notes: string | null;
+  cancellation_reason: string | null;
   gcal_event_id: string | null;
   idempotency_key: string | null;
   confirmation_code: string | null;
@@ -249,6 +250,7 @@ export interface WorkerBindings {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
   ELEVENLABS_WEBHOOK_SECRET: string;
+  TOOLS_WEBHOOK_SECRET?: string;
   ELEVENLABS_TEMPLATE_AGENT_ID: string;
   ELEVENLABS_API_KEY: string;
   TWILIO_ACCOUNT_SID: string;

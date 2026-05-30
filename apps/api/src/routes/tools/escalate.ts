@@ -1,13 +1,14 @@
 import type { Context } from 'hono';
+import { tryToE164 } from '../../lib/normalize';
+import { sendSms } from '../../lib/sms';
+import { getSupabase } from '../../lib/supabase';
 import type {
-  WorkerBindings,
-  ShopRow,
   ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
   EscalateParams,
+  ShopRow,
+  WorkerBindings,
 } from '../../types';
-import { getSupabase } from '../../lib/supabase';
-import { tryToE164 } from '../../lib/normalize';
 
 export async function handleEscalate(
   c: Context<{ Bindings: WorkerBindings }>,
@@ -15,7 +16,10 @@ export async function handleEscalate(
 ): Promise<Response> {
   const raw = await c.req.json<EscalateParams | ElevenLabsToolWebhookRequest<EscalateParams>>();
   const params = ('parameters' in raw ? raw.parameters : raw) as EscalateParams;
-  const conversationId = c.req.header('X-Conversation-Id') ?? ('conversation_id' in raw ? raw.conversation_id : '') ?? '';
+  const conversationId =
+    c.req.header('X-Conversation-Id') ??
+    ('conversation_id' in raw ? raw.conversation_id : '') ??
+    '';
   const { reason, escalation_type, customer_phone } = params;
 
   if (escalation_type === 'callback') {
@@ -28,6 +32,15 @@ export async function handleEscalate(
       elevenlabs_conversation_id: conversationId.includes('{{') ? null : conversationId || null,
       status: 'pending',
     });
+
+    c.executionCtx.waitUntil(
+      sendSms(
+        c.env,
+        shop.twilio_number,
+        shop.owner_escalation_phone,
+        `${shop.name}: New callback request from ${normalizedPhone || 'unknown number'}. Reason: ${reason ?? 'n/a'}`,
+      ),
+    );
 
     return c.json<ElevenLabsToolWebhookResponse>({
       result: `I've noted your callback request. Someone from ${shop.name} will be in touch shortly.`,

@@ -1,30 +1,37 @@
 import type { Context } from 'hono';
+import { getSupabase } from '../../lib/supabase';
 import type {
-  WorkerBindings,
-  ShopRow,
+  AvailableSlot,
+  CheckAvailabilityParams,
   ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
-  CheckAvailabilityParams,
-  AvailableSlot,
+  ShopRow,
+  WorkerBindings,
 } from '../../types';
-import { getSupabase } from '../../lib/supabase';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 function parseTime(s: string): number {
   const m = s.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
   if (!m || !m[1] || !m[3]) return -1;
-  let h = parseInt(m[1], 10);
-  const min = parseInt(m[2] ?? '0', 10);
+  let h = Number.parseInt(m[1], 10);
+  const min = Number.parseInt(m[2] ?? '0', 10);
   const period = m[3].toLowerCase();
   if (period === 'pm' && h !== 12) h += 12;
   if (period === 'am' && h === 12) h = 0;
   return h * 60 + min;
 }
 
-function getHoursForDate(hoursJson: string, dateStr: string): { open: number; close: number } | null {
+function getHoursForDate(
+  hoursJson: string,
+  dateStr: string,
+): { open: number; close: number } | null {
   let parsed: unknown;
-  try { parsed = JSON.parse(hoursJson); } catch { return null; }
+  try {
+    parsed = JSON.parse(hoursJson);
+  } catch {
+    return null;
+  }
 
   if (typeof parsed === 'string') {
     const [openStr, closeStr] = parsed.split('-');
@@ -51,7 +58,8 @@ function getHoursForDate(hoursJson: string, dateStr: string): { open: number; cl
       const from = DAY_NAMES.indexOf(firstDay.trim());
       const to = DAY_NAMES.indexOf(lastDay.trim());
       if (from >= 0 && to >= 0) {
-        match = from <= to ? dayIndex >= from && dayIndex <= to : dayIndex >= from || dayIndex <= to;
+        match =
+          from <= to ? dayIndex >= from && dayIndex <= to : dayIndex >= from || dayIndex <= to;
       }
     }
 
@@ -64,6 +72,14 @@ function getHoursForDate(hoursJson: string, dateStr: string): { open: number; cl
     }
   }
   return null;
+}
+
+function isClosed(closuresJson: string, dateStr: string): boolean {
+  try {
+    const parsed = JSON.parse(closuresJson);
+    if (Array.isArray(parsed)) return parsed.map(String).includes(dateStr);
+  } catch {}
+  return false;
 }
 
 function conflicts(
@@ -83,25 +99,40 @@ function conflicts(
 
 function tzOffsetMinutes(dateStr: string, timezone: string): number {
   const probe = new Date(`${dateStr}T12:00:00Z`);
-  const parts = new Intl.DateTimeFormat('en-US', { timeZone: timezone, timeZoneName: 'shortOffset' })
-    .formatToParts(probe);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: timezone,
+    timeZoneName: 'shortOffset',
+  }).formatToParts(probe);
   const offsetStr = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+0';
   const m = offsetStr.match(/GMT([+-])(\d+)(?::(\d+))?/);
   if (!m) return 0;
   const sign = m[1] === '+' ? 1 : -1;
-  return sign * (parseInt(m[2] ?? '0', 10) * 60 + parseInt(m[3] ?? '0', 10));
+  return sign * (Number.parseInt(m[2] ?? '0', 10) * 60 + Number.parseInt(m[3] ?? '0', 10));
 }
 
 export async function handleCheckAvailability(
   c: Context<{ Bindings: WorkerBindings }>,
   shop: ShopRow,
 ): Promise<Response> {
-  const raw = await c.req.json<CheckAvailabilityParams | ElevenLabsToolWebhookRequest<CheckAvailabilityParams>>();
+  const raw = await c.req.json<
+    CheckAvailabilityParams | ElevenLabsToolWebhookRequest<CheckAvailabilityParams>
+  >();
   const params = ('parameters' in raw ? raw.parameters : raw) as CheckAvailabilityParams;
   const { date, duration_minutes = 30, staff } = params;
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return c.json<ElevenLabsToolWebhookResponse>({ result: 'Invalid date format. Use YYYY-MM-DD.', success: false });
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: 'Invalid date format. Use YYYY-MM-DD.',
+      success: false,
+    });
+  }
+
+  if (isClosed(shop.closures_json, date)) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: 'The shop is closed on that day.',
+      success: true,
+      data: { available_slots: [], total_available: 0, date },
+    });
   }
 
   const hours = getHoursForDate(shop.hours_json, date);
@@ -114,13 +145,19 @@ export async function handleCheckAvailability(
   }
 
   const db = getSupabase(c.env);
+  // Widen the query window by a day on each side: a slot local to `date` can fall on the
+  // adjacent UTC date in extreme timezones. conflicts() filters by exact overlap, so
+  // over-fetching is harmless.
+  const dayStartUtc = new Date(`${date}T00:00:00Z`).getTime();
+  const winStart = new Date(dayStartUtc - 24 * 60 * 60_000).toISOString();
+  const winEnd = new Date(dayStartUtc + 48 * 60 * 60_000).toISOString();
   const { data: booked } = await db
     .from('bookings')
     .select('start_at, end_at, staff')
     .eq('shop_id', shop.id)
     .eq('status', 'confirmed')
-    .gte('start_at', `${date}T00:00:00+00:00`)
-    .lte('start_at', `${date}T23:59:59+00:00`);
+    .gte('start_at', winStart)
+    .lt('start_at', winEnd);
 
   let staffList: string[];
   try {
@@ -154,7 +191,10 @@ export async function handleCheckAvailability(
   }
 
   return c.json<ElevenLabsToolWebhookResponse>({
-    result: slots.length > 0 ? `Found ${slots.length} available slots on ${date}.` : `No available slots on ${date}.`,
+    result:
+      slots.length > 0
+        ? `Found ${slots.length} available slots on ${date}.`
+        : `No available slots on ${date}.`,
     success: true,
     data: { available_slots: slots, total_available: slots.length, date },
   });

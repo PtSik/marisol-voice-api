@@ -9,7 +9,6 @@
       "name": "@voice-agent/api",
       "version": "0.1.0",
       "dependencies": {
-        "@sentry/cloudflare": "^8.0.0",
         "@supabase/supabase-js": "^2.45.0",
         "hono": "^4.6.0",
         "libphonenumber-js": "^1.11.0",
@@ -154,10 +153,6 @@
     "@jridgewell/sourcemap-codec": ["@jridgewell/sourcemap-codec@1.5.5", "", {}, "sha512-cYQ9310grqxueWbl+WuIUIaiUaDcj7WOq5fVhEljNVgRfOUhY9fy2zTvfoqWsnebh8Sl70VScFbICvJnLKB0Og=="],
 
     "@jridgewell/trace-mapping": ["@jridgewell/trace-mapping@0.3.9", "", { "dependencies": { "@jridgewell/resolve-uri": "^3.0.3", "@jridgewell/sourcemap-codec": "^1.4.10" } }, "sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ=="],
-
-    "@sentry/cloudflare": ["@sentry/cloudflare@8.55.2", "", { "dependencies": { "@sentry/core": "8.55.2" }, "optionalDependencies": { "@cloudflare/workers-types": "^4.x" } }, "sha512-8fsMsMzK/2qX/ewrVnJke3Lu5XmGBrTkX/8diZpRDNT9lZ7h+Ixbn8BnJcenD+orsfS1+o+ptxNRFZAbyuuXGw=="],
-
-    "@sentry/core": ["@sentry/core@8.55.2", "", {}, "sha512-YlEBwybUcOQ/KjMHDmof1vwweVnBtBxYlQp7DE3fOdtW4pqqdHWTnTntQs4VgYfxzjJYgtkd9LHlGtg8qy+JVQ=="],
 
     "@supabase/auth-js": ["@supabase/auth-js@2.106.1", "", { "dependencies": { "tslib": "2.8.1" } }, "sha512-7eyheXfAGwkB9bZewJPs+N3UYt6kra2JG6mIxNEgbkvcO15PLD1e75PTIUEYYl3zrifm3GrpShVl7QZxKrXO/w=="],
 

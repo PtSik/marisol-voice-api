@@ -7,7 +7,7 @@ interface GCalCreds {
   calendar_id: string;
 }
 
-let tokenCache: { token: string; expiresAt: number } | null = null;
+const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 function b64url(data: string | Uint8Array): string {
   const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data;
@@ -44,7 +44,11 @@ async function fetchToken(creds: GCalCreds): Promise<string> {
     false,
     ['sign'],
   );
-  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', cryptoKey, new TextEncoder().encode(unsigned));
+  const sig = await crypto.subtle.sign(
+    'RSASSA-PKCS1-v1_5',
+    cryptoKey,
+    new TextEncoder().encode(unsigned),
+  );
   const jwt = `${unsigned}.${b64url(new Uint8Array(sig))}`;
 
   const res = await fetch('https://oauth2.googleapis.com/token', {
@@ -62,9 +66,10 @@ async function fetchToken(creds: GCalCreds): Promise<string> {
 
 async function getToken(creds: GCalCreds): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
-  if (tokenCache && tokenCache.expiresAt > now + 60) return tokenCache.token;
+  const cached = tokenCache.get(creds.client_email);
+  if (cached && cached.expiresAt > now + 60) return cached.token;
   const token = await fetchToken(creds);
-  tokenCache = { token, expiresAt: now + 3500 };
+  tokenCache.set(creds.client_email, { token, expiresAt: now + 3500 });
   return token;
 }
 
@@ -105,7 +110,11 @@ export async function gcalCreateEvent(
   return id;
 }
 
-export async function gcalDeleteEvent(calendarId: string, token: string, eventId: string): Promise<void> {
+export async function gcalDeleteEvent(
+  calendarId: string,
+  token: string,
+  eventId: string,
+): Promise<void> {
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },

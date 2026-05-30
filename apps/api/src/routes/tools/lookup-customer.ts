@@ -1,13 +1,13 @@
 import type { Context } from 'hono';
+import { tryToE164 } from '../../lib/normalize';
+import { getSupabase } from '../../lib/supabase';
 import type {
-  WorkerBindings,
-  ShopRow,
   ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
   LookupCustomerParams,
+  ShopRow,
+  WorkerBindings,
 } from '../../types';
-import { getSupabase } from '../../lib/supabase';
-import { tryToE164 } from '../../lib/normalize';
 
 function mostCommon(arr: string[]): string | null {
   if (arr.length === 0) return null;
@@ -20,13 +20,18 @@ export async function handleLookupCustomer(
   c: Context<{ Bindings: WorkerBindings }>,
   shop: ShopRow,
 ): Promise<Response> {
-  const raw = await c.req.json<LookupCustomerParams | ElevenLabsToolWebhookRequest<LookupCustomerParams>>();
+  const raw = await c.req.json<
+    LookupCustomerParams | ElevenLabsToolWebhookRequest<LookupCustomerParams>
+  >();
   const params = ('parameters' in raw ? raw.parameters : raw) as LookupCustomerParams;
   const { phone_number } = params;
 
   const normalized = tryToE164(phone_number);
   if (!normalized) {
-    return c.json<ElevenLabsToolWebhookResponse>({ result: 'Invalid phone number.', success: false });
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: 'Invalid phone number.',
+      success: false,
+    });
   }
 
   const db = getSupabase(c.env);
@@ -45,7 +50,6 @@ export async function handleLookupCustomer(
     });
   }
 
-  const completed = bookings.filter((b) => b.status === 'completed' || b.status === 'confirmed');
   const latest = bookings[0];
   if (!latest) {
     return c.json<ElevenLabsToolWebhookResponse>({
@@ -56,6 +60,11 @@ export async function handleLookupCustomer(
   }
 
   const nowIso = new Date().toISOString();
+  // Actual visits = completed/confirmed bookings already in the past. bookings is ordered
+  // start_at desc, so past[0] is the most recent real visit.
+  const past = bookings.filter(
+    (b) => (b.status === 'completed' || b.status === 'confirmed') && b.start_at < nowIso,
+  );
   const upcoming = bookings
     .filter((b) => b.status === 'confirmed' && b.start_at > nowIso)
     .map((b) => ({
@@ -67,15 +76,15 @@ export async function handleLookupCustomer(
     }));
 
   return c.json<ElevenLabsToolWebhookResponse>({
-    result: `Found customer with ${bookings.length} booking(s), ${upcoming.length} upcoming.`,
+    result: `Found customer with ${past.length} past visit(s), ${upcoming.length} upcoming.`,
     success: true,
     data: {
       found: true,
       customer_name: latest.customer_name ?? undefined,
-      last_visit: latest.start_at,
-      visit_count: completed.length,
-      preferred_service: mostCommon(completed.map((b) => b.service).filter(Boolean) as string[]),
-      preferred_staff: mostCommon(completed.map((b) => b.staff)),
+      last_visit: past[0]?.start_at,
+      visit_count: past.length,
+      preferred_service: mostCommon(past.map((b) => b.service).filter(Boolean) as string[]),
+      preferred_staff: mostCommon(past.map((b) => b.staff)),
       upcoming_bookings: upcoming,
     },
   });

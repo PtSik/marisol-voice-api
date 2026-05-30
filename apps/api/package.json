@@ -6,13 +6,13 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
+    "test": "bun test src/__tests__/lib src/__tests__/middleware src/__tests__/app",
     "lint": "biome check src/",
     "format": "biome format --write src/"
   },
   "dependencies": {
     "hono": "^4.6.0",
     "@supabase/supabase-js": "^2.45.0",
-    "@sentry/cloudflare": "^8.0.0",
     "libphonenumber-js": "^1.11.0"
   },
   "devDependencies": {

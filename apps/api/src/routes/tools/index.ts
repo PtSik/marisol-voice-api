@@ -1,20 +1,20 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
-import type { WorkerBindings, ShopRow } from '../../types';
 import { getSupabase } from '../../lib/supabase';
-import { handleCheckAvailability } from './check-availability';
+import { verifyToolSecret } from '../../middleware/verify-tool-secret';
+import type { ShopRow, WorkerBindings } from '../../types';
 import { handleBookAppointment } from './book-appointment';
-import { handleLookupCustomer } from './lookup-customer';
 import { handleCancelAppointment } from './cancel-appointment';
-import { handleRescheduleAppointment } from './reschedule-appointment';
+import { handleCheckAvailability } from './check-availability';
 import { handleEscalate } from './escalate';
+import { handleLookupCustomer } from './lookup-customer';
+import { handleRescheduleAppointment } from './reschedule-appointment';
 
 export const toolRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
+toolRoutes.use('*', verifyToolSecret());
+
 async function resolveShop(c: Context<{ Bindings: WorkerBindings }>): Promise<ShopRow | null> {
-  // ElevenLabs header substitution is unreliable — try header, then body, then fall back
-  // to the most recent active call. Single-shop MVP can tolerate the fallback since calls
-  // are short-lived; multi-tenant will need a proper conversation_id pipeline.
   let conversationId = c.req.header('X-Conversation-Id') ?? '';
   if (conversationId.includes('{{')) conversationId = '';
 
@@ -29,34 +29,35 @@ async function resolveShop(c: Context<{ Bindings: WorkerBindings }>): Promise<Sh
 
   const db = getSupabase(c.env);
 
+  // Happy path: a single round-trip — embed the shop row alongside the call lookup.
   if (conversationId) {
-    const { data: call } = await db
+    const { data } = await db
       .from('calls')
-      .select('shop_id')
+      .select('shops(*)')
       .eq('elevenlabs_conversation_id', conversationId)
       .single();
-    if (call) {
-      const { data: shop } = await db.from('shops').select('*').eq('id', call.shop_id).single();
-      return shop ?? null;
-    }
+    const shop = (data as unknown as { shops: ShopRow | null } | null)?.shops ?? null;
+    if (shop) return shop;
   }
 
-  // Fallback: most recent call in the last 10 minutes
+  // Fallback — conversation_id is unreliable on ElevenLabs tool calls. Use the most
+  // recent call only when it is unambiguous; refuse if more than one shop was active in
+  // the window, since guessing across tenants could leak or mis-route data.
   const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
   const { data: recent } = await db
     .from('calls')
     .select('shop_id')
     .gte('started_at', tenMinAgo)
     .order('started_at', { ascending: false })
-    .limit(1)
-    .single();
+    .limit(10);
 
-  if (!recent) {
-    console.log('[resolveShop] no recent call within 10min');
+  const shopIds = [...new Set((recent ?? []).map((r) => r.shop_id))];
+  if (shopIds.length !== 1) {
+    console.warn(`[resolveShop] no unambiguous shop (candidates: ${shopIds.length})`);
     return null;
   }
 
-  const { data: shop } = await db.from('shops').select('*').eq('id', recent.shop_id).single();
+  const { data: shop } = await db.from('shops').select('*').eq('id', shopIds[0]).single();
   return shop ?? null;
 }
 
@@ -65,7 +66,11 @@ type ToolHandler = (c: Context<{ Bindings: WorkerBindings }>, shop: ShopRow) => 
 function toolRoute(handler: ToolHandler) {
   return async (c: Context<{ Bindings: WorkerBindings }>) => {
     const shop = await resolveShop(c);
-    if (!shop) return c.json({ result: 'Unknown conversation or shop not configured.', success: false }, 404);
+    if (!shop)
+      return c.json(
+        { result: 'Unknown conversation or shop not configured.', success: false },
+        404,
+      );
     return handler(c, shop);
   };
 }
