@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { gcalPatchEvent, getGCalClient } from '../../lib/gcal';
+import { validateBookingTime } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { getSupabase } from '../../lib/supabase';
 import {
@@ -43,6 +44,20 @@ export async function handleRescheduleAppointment(
     });
   }
 
+  // Validate the new time before consuming the single-use code, so a bad time doesn't
+  // burn the caller's code.
+  const durationMinutes =
+    new_duration_minutes ??
+    Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000);
+
+  const validation = validateBookingTime(shop, new_start_time, durationMinutes);
+  if (!validation.ok) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: rescheduleTimeError(validation.reason),
+      success: false,
+    });
+  }
+
   const valid = await verifyCode(db, booking_id, code);
   if (!valid) {
     return c.json<ElevenLabsToolWebhookResponse>({
@@ -52,10 +67,9 @@ export async function handleRescheduleAppointment(
   }
 
   const staff = new_staff_name ?? booking.staff;
-  const durationMs = new_duration_minutes
-    ? new_duration_minutes * 60000
-    : new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime();
-  const newEndAt = new Date(new Date(new_start_time).getTime() + durationMs).toISOString();
+  const newEndAt = new Date(
+    new Date(new_start_time).getTime() + durationMinutes * 60000,
+  ).toISOString();
 
   const { error } = await db
     .from('bookings')
@@ -141,4 +155,17 @@ export async function handleRescheduleAppointment(
 
 function spokenCode(code: string): string {
   return code.split('').join(' ');
+}
+
+function rescheduleTimeError(reason: 'invalid' | 'past' | 'closed' | 'outside_hours'): string {
+  switch (reason) {
+    case 'past':
+      return 'That new time has already passed. Please pick a later time.';
+    case 'closed':
+      return "We're closed that day. Could we pick another day?";
+    case 'outside_hours':
+      return "That's outside our opening hours. Let's pick a time while we're open.";
+    default:
+      return "That doesn't look like a valid time. Let's pick an available slot.";
+  }
 }

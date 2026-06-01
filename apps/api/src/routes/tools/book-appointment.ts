@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { gcalCreateEvent, getGCalClient } from '../../lib/gcal';
+import { localIso, tzOffsetMinutes, validateBookingTime } from '../../lib/hours';
 import { tryToE164 } from '../../lib/normalize';
 import { sendSms } from '../../lib/sms';
 import { getSupabase } from '../../lib/supabase';
@@ -42,7 +43,19 @@ export async function handleBookAppointment(
     });
   }
 
-  const endAt = new Date(new Date(start_time).getTime() + duration_minutes * 60000).toISOString();
+  const validation = validateBookingTime(shop, start_time, duration_minutes);
+  if (!validation.ok) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: bookingTimeError(validation.reason),
+      success: false,
+    });
+  }
+
+  const startMs = new Date(start_time).getTime();
+  const endMs = startMs + duration_minutes * 60000;
+  const endAt = new Date(endMs).toISOString();
+  const startDateStr = new Date(startMs).toLocaleDateString('en-CA', { timeZone: shop.timezone });
+  const confirmedEnd = localIso(endMs, tzOffsetMinutes(startDateStr, shop.timezone));
 
   const db = getSupabase(c.env);
   const { data: booking, error } = await db
@@ -127,7 +140,7 @@ export async function handleBookAppointment(
     data: {
       booking_id: booking.id,
       confirmed_start_time: start_time,
-      confirmed_end_time: endAt,
+      confirmed_end_time: confirmedEnd,
       staff_name,
       sms_sent: smsSent,
     },
@@ -136,4 +149,17 @@ export async function handleBookAppointment(
 
 function spokenCode(code: string): string {
   return code.split('').join(' ');
+}
+
+function bookingTimeError(reason: 'invalid' | 'past' | 'closed' | 'outside_hours'): string {
+  switch (reason) {
+    case 'past':
+      return 'That time has already passed. Let me find the next opening for you.';
+    case 'closed':
+      return "We're closed that day. Could we pick another day?";
+    case 'outside_hours':
+      return "That's outside our opening hours. Let's pick a time while we're open.";
+    default:
+      return "That doesn't look like a valid time. Let's pick one of the available slots.";
+  }
 }

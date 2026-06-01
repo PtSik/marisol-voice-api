@@ -55,6 +55,7 @@ export interface AvailableSlot {
   start_time: string;
   end_time: string;
   staff_name: string;
+  label: string;
 }
 
 export interface CheckAvailabilityResult {

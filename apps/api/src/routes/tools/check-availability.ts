@@ -1,4 +1,11 @@
 import type { Context } from 'hono';
+import {
+  getHoursForDate,
+  isClosed,
+  localIso,
+  spokenTimeLabel,
+  tzOffsetMinutes,
+} from '../../lib/hours';
 import { getSupabase } from '../../lib/supabase';
 import type {
   AvailableSlot,
@@ -8,79 +15,6 @@ import type {
   ShopRow,
   WorkerBindings,
 } from '../../types';
-
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
-function parseTime(s: string): number {
-  const m = s.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
-  if (!m || !m[1] || !m[3]) return -1;
-  let h = Number.parseInt(m[1], 10);
-  const min = Number.parseInt(m[2] ?? '0', 10);
-  const period = m[3].toLowerCase();
-  if (period === 'pm' && h !== 12) h += 12;
-  if (period === 'am' && h === 12) h = 0;
-  return h * 60 + min;
-}
-
-function getHoursForDate(
-  hoursJson: string,
-  dateStr: string,
-): { open: number; close: number } | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(hoursJson);
-  } catch {
-    return null;
-  }
-
-  if (typeof parsed === 'string') {
-    const [openStr, closeStr] = parsed.split('-');
-    if (!openStr || !closeStr) return null;
-    const open = parseTime(openStr);
-    const close = parseTime(closeStr);
-    return open >= 0 && close > open ? { open, close } : null;
-  }
-
-  if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return null;
-
-  const dayIndex = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
-  const dayName = DAY_NAMES[dayIndex];
-  if (!dayName) return null;
-
-  for (const [key, value] of Object.entries(parsed as Record<string, string>)) {
-    const [firstDay, lastDay] = key.split('-');
-    if (!firstDay) continue;
-
-    let match = false;
-    if (!lastDay) {
-      match = firstDay.trim() === dayName;
-    } else {
-      const from = DAY_NAMES.indexOf(firstDay.trim());
-      const to = DAY_NAMES.indexOf(lastDay.trim());
-      if (from >= 0 && to >= 0) {
-        match =
-          from <= to ? dayIndex >= from && dayIndex <= to : dayIndex >= from || dayIndex <= to;
-      }
-    }
-
-    if (match) {
-      const [openStr, closeStr] = value.split('-');
-      if (!openStr || !closeStr) continue;
-      const open = parseTime(openStr);
-      const close = parseTime(closeStr);
-      if (open >= 0 && close > open) return { open, close };
-    }
-  }
-  return null;
-}
-
-function isClosed(closuresJson: string, dateStr: string): boolean {
-  try {
-    const parsed = JSON.parse(closuresJson);
-    if (Array.isArray(parsed)) return parsed.map(String).includes(dateStr);
-  } catch {}
-  return false;
-}
 
 function conflicts(
   s1: number,
@@ -95,19 +29,6 @@ function conflicts(
     if (b1 < s2 && b2 > s1) return true;
   }
   return false;
-}
-
-function tzOffsetMinutes(dateStr: string, timezone: string): number {
-  const probe = new Date(`${dateStr}T12:00:00Z`);
-  const parts = new Intl.DateTimeFormat('en-US', {
-    timeZone: timezone,
-    timeZoneName: 'shortOffset',
-  }).formatToParts(probe);
-  const offsetStr = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'GMT+0';
-  const m = offsetStr.match(/GMT([+-])(\d+)(?::(\d+))?/);
-  if (!m) return 0;
-  const sign = m[1] === '+' ? 1 : -1;
-  return sign * (Number.parseInt(m[2] ?? '0', 10) * 60 + Number.parseInt(m[3] ?? '0', 10));
 }
 
 export async function handleCheckAvailability(
@@ -178,22 +99,26 @@ export async function handleCheckAvailability(
     // Convert local minutes-from-midnight to UTC milliseconds
     const s1 = midnight + (t - offsetMin) * 60_000;
     const s2 = s1 + duration_minutes * 60_000;
-    if (s2 <= nowMs) continue; // skip past slots
-    const slotStart = new Date(s1).toISOString().replace(/\.\d{3}Z$/, 'Z');
-    const slotEnd = new Date(s2).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    if (s1 <= nowMs) continue; // skip slots that have already started
+    // Emit times in the shop's local offset so the digits the agent reads are the local
+    // clock time it should speak and book — not a UTC value it would misread.
+    const slotStart = localIso(s1, offsetMin);
+    const slotEnd = localIso(s2, offsetMin);
+    const label = spokenTimeLabel(s1, shop.timezone);
 
     for (const s of targets) {
       if (!conflicts(s1, s2, s, bookings)) {
-        slots.push({ start_time: slotStart, end_time: slotEnd, staff_name: s });
+        slots.push({ start_time: slotStart, end_time: slotEnd, staff_name: s, label });
         if (!staff || staff === 'any') break;
       }
     }
   }
 
+  const soonest = slots[0]?.label;
   return c.json<ElevenLabsToolWebhookResponse>({
     result:
       slots.length > 0
-        ? `Found ${slots.length} available slots on ${date}.`
+        ? `Found ${slots.length} available slots on ${date}, soonest at ${soonest}.`
         : `No available slots on ${date}.`,
     success: true,
     data: { available_slots: slots, total_available: slots.length, date },
