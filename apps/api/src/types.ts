@@ -14,6 +14,8 @@ export interface ConversationDynamicVariables {
   ai_disclosure_text: string;
   caller_phone: string;
   shop_timezone: string;
+  shop_local_date: string;
+  shop_local_datetime: string;
 }
 
 export interface ConversationInitiationClientData {

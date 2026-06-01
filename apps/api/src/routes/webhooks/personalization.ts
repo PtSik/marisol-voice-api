@@ -1,12 +1,18 @@
 import type { Context } from 'hono';
-import type { WorkerBindings, ShopRow, ConversationInitiationClientData, ConversationDynamicVariables } from '../../types';
-import { getSupabase } from '../../lib/supabase';
 import { toE164, tryToE164 } from '../../lib/normalize';
+import { getSupabase } from '../../lib/supabase';
+import type {
+  ConversationDynamicVariables,
+  ConversationInitiationClientData,
+  ShopRow,
+  WorkerBindings,
+} from '../../types';
 
 export function buildPersonalizationData(
   shop: ShopRow,
   callerPhone: string,
 ): ConversationInitiationClientData {
+  const now = new Date();
   const dynamicVars: ConversationDynamicVariables = {
     shop_name: shop.name,
     hours_summary: formatHours(shop.hours_json),
@@ -16,6 +22,18 @@ export function buildPersonalizationData(
     ai_disclosure_text: shop.ai_disclosure_text,
     caller_phone: callerPhone,
     shop_timezone: shop.timezone,
+    // Pre-computed in the shop's timezone so the agent never has to convert UTC → local
+    // (which broke after-hours date math). Computed per call; the date doesn't drift.
+    shop_local_date: now.toLocaleDateString('en-CA', { timeZone: shop.timezone }),
+    shop_local_datetime: now.toLocaleString('en-US', {
+      timeZone: shop.timezone,
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    }),
   };
 
   return { dynamic_variables: dynamicVars };
@@ -58,7 +76,7 @@ export async function handlePersonalization(
   const calledNumber = body.called_number ?? '';
   const callerPhone = body.caller_id ?? '';
 
-  let normalizedTo: string | null = tryToE164(calledNumber);
+  const normalizedTo: string | null = tryToE164(calledNumber);
   if (!normalizedTo) {
     return c.json({ error: 'Invalid called_number' }, 400);
   }
