@@ -110,6 +110,30 @@ export function spokenTimeLabel(utcMs: number, timezone: string): string {
   });
 }
 
+// The shop's UTC offset (minutes) on the local day of `utcMs` — DST-correct per date.
+export function localOffsetFor(utcMs: number, timezone: string): number {
+  const localDate = new Date(utcMs).toLocaleDateString('en-CA', { timeZone: timezone });
+  return tzOffsetMinutes(localDate, timezone);
+}
+
+export function spokenDateTimeLabel(utcMs: number, timezone: string): string {
+  const time = spokenTimeLabel(utcMs, timezone);
+  const dateLocal = new Date(utcMs).toLocaleDateString('en-CA', { timeZone: timezone });
+  const todayLocal = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+  const tomorrowLocal = new Date(Date.now() + 86_400_000).toLocaleDateString('en-CA', {
+    timeZone: timezone,
+  });
+  if (dateLocal === todayLocal) return `today at ${time}`;
+  if (dateLocal === tomorrowLocal) return `tomorrow at ${time}`;
+  const day = new Date(utcMs).toLocaleDateString('en-US', {
+    timeZone: timezone,
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+  });
+  return `${day} at ${time}`;
+}
+
 export type BookingTimeValidation =
   | { ok: true }
   | { ok: false; reason: 'invalid' | 'past' | 'closed' | 'outside_hours' };

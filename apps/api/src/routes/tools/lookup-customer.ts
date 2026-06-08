@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { localIso, localOffsetFor, spokenDateTimeLabel } from '../../lib/hours';
 import { tryToE164 } from '../../lib/normalize';
 import { getSupabase } from '../../lib/supabase';
 import type {
@@ -67,13 +68,21 @@ export async function handleLookupCustomer(
   );
   const upcoming = bookings
     .filter((b) => b.status === 'confirmed' && b.start_at > nowIso)
-    .map((b) => ({
-      booking_id: b.id,
-      start_at: b.start_at,
-      end_at: b.end_at,
-      service: b.service,
-      staff: b.staff,
-    }));
+    .map((b) => {
+      const startMs = new Date(b.start_at).getTime();
+      const off = localOffsetFor(startMs, shop.timezone);
+      return {
+        booking_id: b.id,
+        start_at: localIso(startMs, off),
+        end_at: localIso(new Date(b.end_at).getTime(), off),
+        service: b.service,
+        staff: b.staff,
+        // Spoken local date+time — read this back to the caller, never the raw timestamp.
+        label: spokenDateTimeLabel(startMs, shop.timezone),
+      };
+    });
+
+  const lastVisitMs = past[0] ? new Date(past[0].start_at).getTime() : null;
 
   return c.json<ElevenLabsToolWebhookResponse>({
     result: `Found customer with ${past.length} past visit(s), ${upcoming.length} upcoming.`,
@@ -81,7 +90,12 @@ export async function handleLookupCustomer(
     data: {
       found: true,
       customer_name: latest.customer_name ?? undefined,
-      last_visit: past[0]?.start_at,
+      last_visit:
+        lastVisitMs !== null
+          ? localIso(lastVisitMs, localOffsetFor(lastVisitMs, shop.timezone))
+          : undefined,
+      last_visit_label:
+        lastVisitMs !== null ? spokenDateTimeLabel(lastVisitMs, shop.timezone) : undefined,
       visit_count: past.length,
       preferred_service: mostCommon(past.map((b) => b.service).filter(Boolean) as string[]),
       preferred_staff: mostCommon(past.map((b) => b.staff)),
