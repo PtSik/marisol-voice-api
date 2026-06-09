@@ -198,6 +198,7 @@ export interface ShopRow {
   staff_json: string;
   integration: string;
   integration_credentials_encrypted: string | null;
+  elevenlabs_agent_id: string | null;
   status: string;
   trial_ends_at: string | null;
   cancelled_at: string | null;
@@ -258,6 +259,7 @@ export interface WorkerBindings {
   ELEVENLABS_API_KEY: string;
   TWILIO_ACCOUNT_SID: string;
   TWILIO_AUTH_TOKEN: string;
+  TWILIO_SMS_FROM?: string;
   ENCRYPTION_KEY: string;
   ADMIN_API_KEYS: string;
   ADMIN_IP_ALLOWLIST?: string;

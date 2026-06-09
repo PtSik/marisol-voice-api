@@ -1,6 +1,12 @@
 import type { WorkerBindings } from '../types';
 
-export async function sendSms(env: WorkerBindings, from: string, to: string, body: string): Promise<boolean> {
+export async function sendSms(
+  env: WorkerBindings,
+  fromFallback: string,
+  to: string,
+  body: string,
+): Promise<boolean> {
+  const from = env.TWILIO_SMS_FROM || fromFallback;
   try {
     const res = await fetch(
       `https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/Messages.json`,

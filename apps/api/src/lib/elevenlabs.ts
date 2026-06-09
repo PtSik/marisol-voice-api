@@ -1,4 +1,4 @@
-import type { WorkerBindings, ConversationInitiationClientData } from '../types';
+import type { ConversationInitiationClientData, WorkerBindings } from '../types';
 
 const BASE_URL = 'https://api.elevenlabs.io/v1';
 
@@ -7,6 +7,7 @@ export async function registerCall(
   fromNumber: string,
   toNumber: string,
   clientData: ConversationInitiationClientData,
+  agentId?: string | null,
 ): Promise<{ twiml: string; conversation_id: string }> {
   const res = await fetch(`${BASE_URL}/convai/twilio/register-call`, {
     method: 'POST',
@@ -15,7 +16,7 @@ export async function registerCall(
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      agent_id: env.ELEVENLABS_TEMPLATE_AGENT_ID,
+      agent_id: agentId || env.ELEVENLABS_TEMPLATE_AGENT_ID,
       from_number: fromNumber,
       to_number: toNumber,
       direction: 'inbound',

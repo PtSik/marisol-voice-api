@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
-import type { WorkerBindings } from '../../types';
 import { registerCall } from '../../lib/elevenlabs';
-import { getSupabase } from '../../lib/supabase';
 import { toE164 } from '../../lib/normalize';
+import { getSupabase } from '../../lib/supabase';
+import type { WorkerBindings } from '../../types';
 import { buildPersonalizationData } from '../webhooks/personalization';
 
 async function validateTwilioSignature(
@@ -28,7 +28,9 @@ async function validateTwilioSignature(
   return signature === expected;
 }
 
-export async function handleTwilioInbound(c: Context<{ Bindings: WorkerBindings }>): Promise<Response> {
+export async function handleTwilioInbound(
+  c: Context<{ Bindings: WorkerBindings }>,
+): Promise<Response> {
   const twilioSig = c.req.header('X-Twilio-Signature') ?? '';
   const formData = await c.req.formData();
   const params: Record<string, string> = {};
@@ -37,12 +39,7 @@ export async function handleTwilioInbound(c: Context<{ Bindings: WorkerBindings 
   });
 
   const url = c.req.url;
-  const valid = await validateTwilioSignature(
-    c.env.TWILIO_AUTH_TOKEN,
-    url,
-    params,
-    twilioSig,
-  );
+  const valid = await validateTwilioSignature(c.env.TWILIO_AUTH_TOKEN, url, params, twilioSig);
 
   if (!valid) {
     return c.text('Forbidden', 403);
@@ -75,7 +72,13 @@ export async function handleTwilioInbound(c: Context<{ Bindings: WorkerBindings 
 
   const clientData = buildPersonalizationData(shop, fromNumber);
 
-  const result = await registerCall(c.env, fromNumber, normalizedTo, clientData);
+  const result = await registerCall(
+    c.env,
+    fromNumber,
+    normalizedTo,
+    clientData,
+    shop.elevenlabs_agent_id,
+  );
 
   // Inject dynamic_variables as Stream Parameters since register-call ignores
   // conversation_initiation_client_data on the request body.
