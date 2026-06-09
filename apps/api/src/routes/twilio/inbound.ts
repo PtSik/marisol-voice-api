@@ -45,8 +45,8 @@ export async function handleTwilioInbound(
     return c.text('Forbidden', 403);
   }
 
-  const toNumber = params['To'] ?? '';
-  const fromNumber = params['From'] ?? '';
+  const toNumber = params.To ?? '';
+  const fromNumber = params.From ?? '';
 
   if (!toNumber || !fromNumber) {
     return c.text('Bad Request', 400);

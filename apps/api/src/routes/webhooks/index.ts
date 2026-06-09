@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
-import type { WorkerBindings } from '../../types';
 import { verifyElevenLabsSignature } from '../../middleware/verify-elevenlabs-signature';
+import type { WorkerBindings } from '../../types';
 import { handlePersonalization } from './personalization';
 import { handlePostCall } from './post-call';
 

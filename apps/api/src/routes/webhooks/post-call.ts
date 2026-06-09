@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
-import type { WorkerBindings, PostCallWebhookPayload } from '../../types';
 import { getSupabase } from '../../lib/supabase';
+import type { PostCallWebhookPayload, WorkerBindings } from '../../types';
 
 export async function handlePostCall(c: Context<{ Bindings: WorkerBindings }>): Promise<Response> {
   let payload: PostCallWebhookPayload;

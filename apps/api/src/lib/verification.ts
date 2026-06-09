@@ -59,10 +59,7 @@ export async function verifyCode(
   if (error || !data) return false;
 
   // Mark as consumed
-  await db
-    .from('verification_codes')
-    .update({ used_at: now })
-    .eq('id', data.id);
+  await db.from('verification_codes').update({ used_at: now }).eq('id', data.id);
 
   return true;
 }

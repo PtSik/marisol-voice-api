@@ -1,4 +1,4 @@
-import { parsePhoneNumber, isValidPhoneNumber } from 'libphonenumber-js';
+import { isValidPhoneNumber, parsePhoneNumber } from 'libphonenumber-js';
 import type { CountryCode } from 'libphonenumber-js';
 
 export function toE164(phone: string, country: CountryCode = 'US'): string {
