@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
+import { tryToE164 } from '../../lib/normalize';
 import { getSupabase } from '../../lib/supabase';
 import { verifyToolSecret } from '../../middleware/verify-tool-secret';
 import type { ShopRow, WorkerBindings } from '../../types';
@@ -14,51 +15,73 @@ export const toolRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
 toolRoutes.use('*', verifyToolSecret());
 
-async function resolveShop(c: Context<{ Bindings: WorkerBindings }>): Promise<ShopRow | null> {
-  let conversationId = c.req.header('X-Conversation-Id') ?? '';
-  if (conversationId.includes('{{')) conversationId = '';
+const cleanVar = (v: string | undefined): string => (v && !v.includes('{{') ? v.trim() : '');
 
-  if (!conversationId) {
-    try {
-      const body = await c.req.json<{ conversation_id?: string }>();
-      if (body.conversation_id && !body.conversation_id.includes('{{')) {
-        conversationId = body.conversation_id;
-      }
-    } catch {}
+interface ToolIdentifiers {
+  shopId: string;
+  calledNumber: string;
+  conversationId: string;
+}
+
+// ElevenLabs substitutes dynamic variables in the tool BODY (not headers), and may send
+// the LLM params either flat or nested under `parameters`. Read identifiers from both.
+export async function readIdentifiers(
+  c: Context<{ Bindings: WorkerBindings }>,
+): Promise<ToolIdentifiers> {
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = await c.req.json<Record<string, unknown>>();
+  } catch {}
+  const nested = (raw.parameters as Record<string, unknown> | undefined) ?? {};
+  const pick = (key: string) => cleanVar((raw[key] ?? nested[key]) as string | undefined);
+  return {
+    shopId: pick('shop_id'),
+    calledNumber: pick('called_number'),
+    conversationId: pick('conversation_id'),
+  };
+}
+
+export async function resolveShopFrom(
+  db: ReturnType<typeof getSupabase>,
+  ids: ToolIdentifiers,
+): Promise<ShopRow | null> {
+  // 1. Deterministic: the shop_id dynamic variable injected at call start → primary key.
+  if (ids.shopId) {
+    const { data: shop } = await db.from('shops').select('*').eq('id', ids.shopId).single();
+    if (shop) return shop as ShopRow;
   }
 
-  const db = getSupabase(c.env);
+  // 2. Deterministic: the dialed number → unique twilio_number. Always present on Twilio
+  //    and immune to the async calls-row insert, so it works even on the first tool call.
+  if (ids.calledNumber) {
+    const normalized = tryToE164(ids.calledNumber);
+    if (normalized) {
+      const { data: shop } = await db
+        .from('shops')
+        .select('*')
+        .eq('twilio_number', normalized)
+        .single();
+      if (shop) return shop as ShopRow;
+    }
+  }
 
-  // Happy path: a single round-trip — embed the shop row alongside the call lookup.
-  if (conversationId) {
+  // 3. conversation_id → calls join (works once the calls row has been written).
+  if (ids.conversationId) {
     const { data } = await db
       .from('calls')
       .select('shops(*)')
-      .eq('elevenlabs_conversation_id', conversationId)
+      .eq('elevenlabs_conversation_id', ids.conversationId)
       .single();
     const shop = (data as unknown as { shops: ShopRow | null } | null)?.shops ?? null;
     if (shop) return shop;
   }
 
-  // Fallback — conversation_id is unreliable on ElevenLabs tool calls. Use the most
-  // recent call only when it is unambiguous; refuse if more than one shop was active in
-  // the window, since guessing across tenants could leak or mis-route data.
-  const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
-  const { data: recent } = await db
-    .from('calls')
-    .select('shop_id')
-    .gte('started_at', tenMinAgo)
-    .order('started_at', { ascending: false })
-    .limit(10);
+  return null;
+}
 
-  const shopIds = [...new Set((recent ?? []).map((r) => r.shop_id))];
-  if (shopIds.length !== 1) {
-    console.warn(`[resolveShop] no unambiguous shop (candidates: ${shopIds.length})`);
-    return null;
-  }
-
-  const { data: shop } = await db.from('shops').select('*').eq('id', shopIds[0]).single();
-  return shop ?? null;
+async function resolveShop(c: Context<{ Bindings: WorkerBindings }>): Promise<ShopRow | null> {
+  const ids = await readIdentifiers(c);
+  return resolveShopFrom(getSupabase(c.env), ids);
 }
 
 type ToolHandler = (c: Context<{ Bindings: WorkerBindings }>, shop: ShopRow) => Promise<Response>;

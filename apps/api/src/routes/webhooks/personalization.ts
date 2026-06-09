@@ -14,6 +14,7 @@ export function buildPersonalizationData(
 ): ConversationInitiationClientData {
   const now = new Date();
   const dynamicVars: ConversationDynamicVariables = {
+    shop_id: shop.id,
     shop_name: shop.name,
     hours_summary: formatHours(shop.hours_json),
     services_summary: formatJson(shop.services_json),

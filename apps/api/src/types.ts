@@ -6,6 +6,7 @@ export interface PersonalizationWebhookRequest {
 }
 
 export interface ConversationDynamicVariables {
+  shop_id: string;
   shop_name: string;
   hours_summary: string;
   services_summary: string;
