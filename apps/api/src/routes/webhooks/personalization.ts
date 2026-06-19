@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { getHoursForDate, isClosed } from '../../lib/hours';
 import { toE164, tryToE164 } from '../../lib/normalize';
 import { getSupabase } from '../../lib/supabase';
 import type {
@@ -16,7 +17,7 @@ export function buildPersonalizationData(
   const dynamicVars: ConversationDynamicVariables = {
     shop_id: shop.id,
     shop_name: shop.name,
-    hours_summary: formatHours(shop.hours_json),
+    hours_summary: formatSchedule(shop, now),
     services_summary: formatJson(shop.services_json),
     staff_summary: formatJson(shop.staff_json),
     escalation_phone: shop.escalation_phone,
@@ -40,18 +41,48 @@ export function buildPersonalizationData(
   return { dynamic_variables: dynamicVars };
 }
 
-function formatHours(hoursJson: string): string {
-  try {
-    const parsed = JSON.parse(hoursJson);
-    if (typeof parsed === 'string') return parsed;
-    // Accept { "Mon-Sat": "9am-7pm", "Sun": "10am-5pm" } or array
-    if (Array.isArray(parsed)) return parsed.join(', ');
-    return Object.entries(parsed)
-      .map(([day, hrs]) => `${day} ${hrs}`)
-      .join(', ');
-  } catch {
-    return hoursJson;
+// Hours are pre-resolved per calendar date here so the agent never has to derive a
+// weekday or map it to an hours line itself — that date math is what produced wrong
+// spoken hours. Each line carries the weekday and the YYYY-MM-DD the agent passes to tools.
+const SCHEDULE_DAYS = 7;
+
+function clockLabel(minutesFromMidnight: number): string {
+  let hour = Math.floor(minutesFromMidnight / 60);
+  const minute = minutesFromMidnight % 60;
+  const period = hour >= 12 ? 'pm' : 'am';
+  hour %= 12;
+  if (hour === 0) hour = 12;
+  return minute === 0 ? `${hour}${period}` : `${hour}:${String(minute).padStart(2, '0')}${period}`;
+}
+
+function formatSchedule(shop: ShopRow, now: Date): string {
+  const todayLocal = now.toLocaleDateString('en-CA', { timeZone: shop.timezone });
+  const base = new Date(`${todayLocal}T12:00:00Z`).getTime();
+  const lines: string[] = [];
+
+  for (let i = 0; i < SCHEDULE_DAYS; i++) {
+    const day = new Date(base + i * 86_400_000);
+    const dateStr = day.toISOString().slice(0, 10);
+    const weekday = day.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'UTC' });
+    const monthDay = day.toLocaleDateString('en-US', {
+      month: 'long',
+      day: 'numeric',
+      timeZone: 'UTC',
+    });
+
+    let hrs: string;
+    if (isClosed(shop.closures_json, dateStr)) {
+      hrs = 'closed';
+    } else {
+      const open = getHoursForDate(shop.hours_json, dateStr);
+      hrs = open ? `${clockLabel(open.open)}–${clockLabel(open.close)}` : 'closed';
+    }
+
+    const prefix = i === 0 ? 'Today — ' : i === 1 ? 'Tomorrow — ' : '';
+    lines.push(`${prefix}${weekday}, ${monthDay} (${dateStr}): ${hrs}`);
   }
+
+  return lines.join('\n');
 }
 
 function formatJson(json: string): string {

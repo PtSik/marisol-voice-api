@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
 import { gcalDeleteEvent, getGCalClient } from '../../lib/gcal';
+import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { getSupabase } from '../../lib/supabase';
 import { verifyCode } from '../../lib/verification';
@@ -74,20 +75,21 @@ export async function handleCancelAppointment(
     );
   }
 
-  const startLabel = new Date(booking.start_at).toLocaleString('en-US', {
+  const smsLabel = new Date(booking.start_at).toLocaleString('en-US', {
     timeZone: shop.timezone,
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+  const spokenLabel = spokenDateTimeLabel(new Date(booking.start_at).getTime(), shop.timezone);
   const smsSent = await sendSms(
     c.env,
     shop.twilio_number,
     booking.customer_phone,
-    `${shop.name}: Your appointment on ${startLabel} with ${booking.staff} has been cancelled.`,
+    `${shop.name}: Your appointment on ${smsLabel} with ${booking.staff} has been cancelled.`,
   );
 
   return c.json<ElevenLabsToolWebhookResponse>({
-    result: `Appointment on ${startLabel} with ${booking.staff} has been cancelled.`,
+    result: `Your appointment ${spokenLabel} with ${booking.staff} has been cancelled.`,
     success: true,
     data: { cancelled: true, booking_id, original_start_time: booking.start_at, sms_sent: smsSent },
   });

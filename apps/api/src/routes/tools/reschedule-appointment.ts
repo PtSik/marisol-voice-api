@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { gcalPatchEvent, getGCalClient } from '../../lib/gcal';
-import { validateBookingTime } from '../../lib/hours';
+import { spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { getSupabase } from '../../lib/supabase';
 import {
@@ -122,21 +122,22 @@ export async function handleRescheduleAppointment(
   const newCode = generateCode();
   await storeCode(db, booking_id, newCode, BOOKING_CODE_TTL_MINUTES);
 
-  const newLabel = new Date(new_start_time).toLocaleString('en-US', {
+  const smsLabel = new Date(new_start_time).toLocaleString('en-US', {
     timeZone: shop.timezone,
     dateStyle: 'medium',
     timeStyle: 'short',
   });
+  const spokenLabel = spokenDateTimeLabel(new Date(new_start_time).getTime(), shop.timezone);
   const smsSent = await sendSms(
     c.env,
     shop.twilio_number,
     booking.customer_phone,
-    `${shop.name}: Your appointment has been rescheduled to ${newLabel} with ${staff}. New verification code: ${newCode}. Keep this to cancel or reschedule.`,
+    `${shop.name}: Your appointment has been rescheduled to ${smsLabel} with ${staff}. New verification code: ${newCode}. Keep this to cancel or reschedule.`,
   );
 
   const result = smsSent
-    ? `Appointment rescheduled to ${newLabel} with ${staff}. I've texted your new confirmation code.`
-    : `Appointment rescheduled to ${newLabel} with ${staff}. I couldn't send the text — your new code is ${spokenCode(newCode)}. Please write it down.`;
+    ? `Appointment rescheduled to ${spokenLabel} with ${staff}. I've texted your new confirmation code.`
+    : `Appointment rescheduled to ${spokenLabel} with ${staff}. I couldn't send the text — your new code is ${spokenCode(newCode)}. Please write it down.`;
 
   return c.json<ElevenLabsToolWebhookResponse>({
     result,
