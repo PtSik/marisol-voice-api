@@ -8,6 +8,11 @@ import {
 } from '../../lib/hours';
 import { tryToE164 } from '../../lib/normalize';
 import { sendSms } from '../../lib/sms';
+import {
+  bookingConfirmationSms,
+  normalizeSmsLanguage,
+  smsWhenLabel,
+} from '../../lib/sms-templates';
 import { getSupabase } from '../../lib/supabase';
 import { BOOKING_CODE_TTL_MINUTES, generateCode, storeCode } from '../../lib/verification';
 import type {
@@ -39,6 +44,7 @@ export async function handleBookAppointment(
     service,
     notes,
   } = params;
+  const language = normalizeSmsLanguage(params.language);
 
   const normalizedPhone = tryToE164(customer_phone);
   if (!normalizedPhone) {
@@ -74,6 +80,7 @@ export async function handleBookAppointment(
       start_at: start_time,
       end_at: endAt,
       notes: notes ?? null,
+      language,
       idempotency_key:
         conversationId && !conversationId.includes('{{') ? `${conversationId}:${start_time}` : null,
       status: 'confirmed',
@@ -123,17 +130,18 @@ export async function handleBookAppointment(
   const code = generateCode();
   await storeCode(db, booking.id, code, BOOKING_CODE_TTL_MINUTES);
 
-  const smsLabel = new Date(start_time).toLocaleString('en-US', {
-    timeZone: shop.timezone,
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  const smsLabel = smsWhenLabel(startMs, shop.timezone, language);
   const spokenLabel = spokenDateTimeLabel(startMs, shop.timezone);
   const smsSent = await sendSms(
     c.env,
     shop.twilio_number,
     normalizedPhone,
-    `${shop.name}: Appointment confirmed on ${smsLabel} with ${staff_name}. Verification code: ${code}. Keep this to cancel or reschedule.`,
+    bookingConfirmationSms(language, {
+      shopName: shop.name,
+      whenLabel: smsLabel,
+      staff: staff_name,
+      code,
+    }),
   );
 
   const result = smsSent

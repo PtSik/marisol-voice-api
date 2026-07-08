@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { gcalDeleteEvent, getGCalClient } from '../../lib/gcal';
 import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
+import { cancellationSms, normalizeSmsLanguage, smsWhenLabel } from '../../lib/sms-templates';
 import { getSupabase } from '../../lib/supabase';
 import { verifyCode } from '../../lib/verification';
 import type {
@@ -25,7 +26,7 @@ export async function handleCancelAppointment(
   const db = getSupabase(c.env);
   const { data: booking } = await db
     .from('bookings')
-    .select('id, shop_id, customer_phone, staff, start_at, status, gcal_event_id')
+    .select('id, shop_id, customer_phone, staff, start_at, status, gcal_event_id, language')
     .eq('id', booking_id)
     .single();
 
@@ -75,17 +76,18 @@ export async function handleCancelAppointment(
     );
   }
 
-  const smsLabel = new Date(booking.start_at).toLocaleString('en-US', {
-    timeZone: shop.timezone,
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  const language = normalizeSmsLanguage(params.language ?? booking.language);
+  const smsLabel = smsWhenLabel(new Date(booking.start_at).getTime(), shop.timezone, language);
   const spokenLabel = spokenDateTimeLabel(new Date(booking.start_at).getTime(), shop.timezone);
   const smsSent = await sendSms(
     c.env,
     shop.twilio_number,
     booking.customer_phone,
-    `${shop.name}: Your appointment on ${smsLabel} with ${booking.staff} has been cancelled.`,
+    cancellationSms(language, {
+      shopName: shop.name,
+      whenLabel: smsLabel,
+      staff: booking.staff,
+    }),
   );
 
   return c.json<ElevenLabsToolWebhookResponse>({

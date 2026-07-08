@@ -2,6 +2,11 @@ import type { Context } from 'hono';
 import { gcalPatchEvent, getGCalClient } from '../../lib/gcal';
 import { spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
+import {
+  normalizeSmsLanguage,
+  rescheduleConfirmationSms,
+  smsWhenLabel,
+} from '../../lib/sms-templates';
 import { getSupabase } from '../../lib/supabase';
 import {
   BOOKING_CODE_TTL_MINUTES,
@@ -30,7 +35,7 @@ export async function handleRescheduleAppointment(
   const db = getSupabase(c.env);
   const { data: booking } = await db
     .from('bookings')
-    .select('id, shop_id, customer_phone, staff, start_at, end_at, gcal_event_id, status')
+    .select('id, shop_id, customer_phone, staff, start_at, end_at, gcal_event_id, status, language')
     .eq('id', booking_id)
     .single();
 
@@ -67,6 +72,7 @@ export async function handleRescheduleAppointment(
   }
 
   const staff = new_staff_name ?? booking.staff;
+  const language = normalizeSmsLanguage(params.language ?? booking.language);
   const newEndAt = new Date(
     new Date(new_start_time).getTime() + durationMinutes * 60000,
   ).toISOString();
@@ -77,6 +83,7 @@ export async function handleRescheduleAppointment(
       start_at: new_start_time,
       end_at: newEndAt,
       staff,
+      language,
       updated_at: new Date().toISOString(),
     })
     .eq('id', booking_id);
@@ -122,17 +129,18 @@ export async function handleRescheduleAppointment(
   const newCode = generateCode();
   await storeCode(db, booking_id, newCode, BOOKING_CODE_TTL_MINUTES);
 
-  const smsLabel = new Date(new_start_time).toLocaleString('en-US', {
-    timeZone: shop.timezone,
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  });
+  const smsLabel = smsWhenLabel(new Date(new_start_time).getTime(), shop.timezone, language);
   const spokenLabel = spokenDateTimeLabel(new Date(new_start_time).getTime(), shop.timezone);
   const smsSent = await sendSms(
     c.env,
     shop.twilio_number,
     booking.customer_phone,
-    `${shop.name}: Your appointment has been rescheduled to ${smsLabel} with ${staff}. New verification code: ${newCode}. Keep this to cancel or reschedule.`,
+    rescheduleConfirmationSms(language, {
+      shopName: shop.name,
+      whenLabel: smsLabel,
+      staff,
+      code: newCode,
+    }),
   );
 
   const result = smsSent

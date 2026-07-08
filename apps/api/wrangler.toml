@@ -7,6 +7,9 @@ minify = true
 [observability]
 enabled = true
 
+[triggers]
+crons = ["0 * * * *"]
+
 [vars]
 SUPABASE_URL = "https://ypvlndfdszdinvpebumb.supabase.co"
 ENVIRONMENT = "development"

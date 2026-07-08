@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
+import { runReminders } from './lib/reminders';
 import { adminRoutes } from './routes/admin';
 import { toolRoutes } from './routes/tools';
 import { twilioRoutes } from './routes/twilio';
@@ -33,5 +34,10 @@ app.route('/admin', adminRoutes);
 export default {
   async fetch(req: Request, env: WorkerBindings, ctx: ExecutionContext): Promise<Response> {
     return app.fetch(req, env, ctx);
+  },
+  async scheduled(_controller: ScheduledController, env: WorkerBindings, ctx: ExecutionContext) {
+    ctx.waitUntil(
+      runReminders(env).then((r) => console.log('[reminders] tick:', JSON.stringify(r))),
+    );
   },
 } satisfies ExportedHandler<WorkerBindings>;

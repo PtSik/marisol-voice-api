@@ -75,6 +75,7 @@ export interface BookAppointmentParams {
   customer_name?: string;
   service?: string;
   notes?: string;
+  language?: 'en' | 'es';
 }
 
 export interface BookAppointmentResult {
@@ -110,6 +111,7 @@ export interface CancelAppointmentParams {
   booking_id: string;
   code: string;
   reason?: string;
+  language?: 'en' | 'es';
 }
 
 export interface CancelAppointmentResult {
@@ -125,6 +127,7 @@ export interface RescheduleAppointmentParams {
   new_start_time: string;
   new_duration_minutes?: number;
   new_staff_name?: string;
+  language?: 'en' | 'es';
 }
 
 export interface RescheduleAppointmentResult {
@@ -200,6 +203,7 @@ export interface ShopRow {
   integration: string;
   integration_credentials_encrypted: string | null;
   elevenlabs_agent_id: string | null;
+  reminders_enabled: boolean;
   status: string;
   trial_ends_at: string | null;
   cancelled_at: string | null;
@@ -221,6 +225,8 @@ export interface BookingRow {
   gcal_event_id: string | null;
   idempotency_key: string | null;
   confirmation_code: string | null;
+  language: string;
+  reminder_sent_at: string | null;
   created_at: string;
   updated_at: string;
 }
