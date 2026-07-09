@@ -41,6 +41,12 @@ export async function readIdentifiers(
   };
 }
 
+export function hasPhoneContext(raw: unknown): boolean {
+  const body = (raw ?? {}) as Record<string, unknown>;
+  const nested = (body.parameters as Record<string, unknown> | undefined) ?? {};
+  return !!cleanVar((body.called_number ?? nested.called_number) as string | undefined);
+}
+
 export async function resolveShopFrom(
   db: ReturnType<typeof getSupabase>,
   ids: ToolIdentifiers,

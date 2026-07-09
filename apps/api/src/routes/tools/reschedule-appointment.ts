@@ -21,6 +21,7 @@ import type {
   ShopRow,
   WorkerBindings,
 } from '../../types';
+import { hasPhoneContext } from './index';
 
 export async function handleRescheduleAppointment(
   c: Context<{ Bindings: WorkerBindings }>,
@@ -31,6 +32,13 @@ export async function handleRescheduleAppointment(
   >();
   const params = ('parameters' in raw ? raw.parameters : raw) as RescheduleAppointmentParams;
   const { booking_id, code, new_start_time, new_duration_minutes, new_staff_name } = params;
+
+  if (!hasPhoneContext(raw)) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: "You're all set — in the real product I'd text your confirmation now.",
+      success: true,
+    });
+  }
 
   const db = getSupabase(c.env);
   const { data: booking } = await db

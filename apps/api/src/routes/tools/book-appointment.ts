@@ -22,6 +22,7 @@ import type {
   ShopRow,
   WorkerBindings,
 } from '../../types';
+import { hasPhoneContext } from './index';
 
 export async function handleBookAppointment(
   c: Context<{ Bindings: WorkerBindings }>,
@@ -45,6 +46,13 @@ export async function handleBookAppointment(
     notes,
   } = params;
   const language = normalizeSmsLanguage(params.language);
+
+  if (!hasPhoneContext(raw)) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: "You're all set — in the real product I'd text your confirmation now.",
+      success: true,
+    });
+  }
 
   const normalizedPhone = tryToE164(customer_phone);
   if (!normalizedPhone) {
