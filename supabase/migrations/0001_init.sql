@@ -18,7 +18,7 @@ CREATE TABLE IF NOT EXISTS shops (
   services_json                   TEXT NOT NULL DEFAULT '[]',
   staff_json                      TEXT NOT NULL DEFAULT '[]',
   integration                     TEXT NOT NULL DEFAULT 'none' CHECK (integration IN ('google_calendar', 'none')),
-  integration_credentials_encrypted BYTEA,
+  integration_credentials_encrypted TEXT,
   status                          TEXT NOT NULL DEFAULT 'trial' CHECK (status IN ('trial', 'active', 'cancelled', 'suspended')),
   trial_ends_at                   TIMESTAMPTZ,
   cancelled_at                    TIMESTAMPTZ,

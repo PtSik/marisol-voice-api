@@ -1,4 +1,4 @@
-import type { WorkerBindings } from '../types';
+import type { ShopRow, WorkerBindings } from '../types';
 import { decrypt } from './crypto';
 
 interface GCalCreds {
@@ -6,6 +6,14 @@ interface GCalCreds {
   private_key: string;
   calendar_id: string;
 }
+
+interface OAuthCreds {
+  type: 'oauth';
+  refresh_token: string;
+  calendar_id: string;
+}
+
+type StoredCreds = GCalCreds | OAuthCreds;
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
@@ -73,13 +81,43 @@ async function getToken(creds: GCalCreds): Promise<string> {
   return token;
 }
 
+async function fetchOAuthToken(env: WorkerBindings, refreshToken: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const cached = tokenCache.get(refreshToken);
+  if (cached && cached.expiresAt > now + 60) return cached.token;
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: env.GOOGLE_OAUTH_CLIENT_ID ?? '',
+      client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
+    }),
+  });
+  if (!res.ok) throw new Error(`GCal OAuth refresh failed: ${await res.text()}`);
+  const { access_token, expires_in } = await res.json<{
+    access_token: string;
+    expires_in?: number;
+  }>();
+  tokenCache.set(refreshToken, {
+    token: access_token,
+    expiresAt: now + (expires_in ?? 3600) - 100,
+  });
+  return access_token;
+}
+
 export async function getGCalClient(
   env: WorkerBindings,
   encryptedCreds: string,
-): Promise<GCalCreds & { token: string }> {
-  const creds: GCalCreds = JSON.parse(await decrypt(encryptedCreds, env.ENCRYPTION_KEY));
+): Promise<{ calendar_id: string; token: string }> {
+  const creds = JSON.parse(await decrypt(encryptedCreds, env.ENCRYPTION_KEY)) as StoredCreds;
+  if ('type' in creds) {
+    const token = await fetchOAuthToken(env, creds.refresh_token);
+    return { calendar_id: creds.calendar_id, token };
+  }
   const token = await getToken(creds);
-  return { ...creds, token };
+  return { calendar_id: creds.calendar_id, token };
 }
 
 export async function gcalCreateEvent(
@@ -143,4 +181,82 @@ export async function gcalPatchEvent(
     },
   );
   if (!res.ok) throw new Error(`GCal events.patch failed: ${res.status}`);
+}
+
+export interface GCalBusy {
+  start: number;
+  end: number;
+  id: string;
+}
+
+interface GCalEventTime {
+  dateTime?: string;
+  date?: string;
+}
+
+export async function gcalListBusy(
+  calendarId: string,
+  token: string,
+  timeMinIso: string,
+  timeMaxIso: string,
+  signal?: AbortSignal,
+): Promise<GCalBusy[]> {
+  const url = new URL(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+  );
+  url.search = new URLSearchParams({
+    singleEvents: 'true',
+    timeMin: timeMinIso,
+    timeMax: timeMaxIso,
+    maxResults: '250',
+    fields: 'items(id,start,end,status,transparency)',
+  }).toString();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: signal ?? null,
+  });
+  if (!res.ok) throw new Error(`GCal events.list failed: ${res.status}`);
+  const data = await res.json<{
+    items?: Array<{
+      id: string;
+      status?: string;
+      transparency?: string;
+      start?: GCalEventTime;
+      end?: GCalEventTime;
+    }>;
+  }>();
+  const busy: GCalBusy[] = [];
+  for (const ev of data.items ?? []) {
+    if (ev.status === 'cancelled' || ev.transparency === 'transparent') continue;
+    const s = ev.start?.dateTime ?? ev.start?.date;
+    const e = ev.end?.dateTime ?? ev.end?.date;
+    if (!s || !e) continue;
+    busy.push({ start: new Date(s).getTime(), end: new Date(e).getTime(), id: ev.id });
+  }
+  return busy;
+}
+
+// Foreign-event busy for a shop's calendar. Fail-open: any error/timeout yields [] so the
+// voice agent keeps answering from Supabase alone rather than going silent on the line.
+export async function getGCalBusy(
+  env: WorkerBindings,
+  shop: ShopRow,
+  timeMinIso: string,
+  timeMaxIso: string,
+  timeoutMs = 1500,
+): Promise<GCalBusy[]> {
+  if (shop.integration !== 'google_calendar' || !shop.integration_credentials_encrypted) return [];
+  try {
+    const gcal = await getGCalClient(env, shop.integration_credentials_encrypted);
+    return await gcalListBusy(
+      gcal.calendar_id,
+      gcal.token,
+      timeMinIso,
+      timeMaxIso,
+      AbortSignal.timeout(timeoutMs),
+    );
+  } catch (err) {
+    console.error('[gcal-busy] fail-open:', err instanceof Error ? err.message : err);
+    return [];
+  }
 }

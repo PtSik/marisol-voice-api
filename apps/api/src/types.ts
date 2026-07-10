@@ -270,6 +270,8 @@ export interface WorkerBindings {
   ENCRYPTION_KEY: string;
   ADMIN_API_KEYS: string;
   ADMIN_IP_ALLOWLIST?: string;
+  GOOGLE_OAUTH_CLIENT_ID?: string;
+  GOOGLE_OAUTH_CLIENT_SECRET?: string;
 }
 
 export interface WorkerVariables {

@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { getGCalBusy } from '../../lib/gcal';
 import {
   getHoursForDate,
   isClosed,
@@ -72,13 +73,16 @@ export async function handleCheckAvailability(
   const dayStartUtc = new Date(`${date}T00:00:00Z`).getTime();
   const winStart = new Date(dayStartUtc - 24 * 60 * 60_000).toISOString();
   const winEnd = new Date(dayStartUtc + 48 * 60 * 60_000).toISOString();
-  const { data: booked } = await db
-    .from('bookings')
-    .select('start_at, end_at, staff')
-    .eq('shop_id', shop.id)
-    .eq('status', 'confirmed')
-    .gte('start_at', winStart)
-    .lt('start_at', winEnd);
+  const [{ data: booked }, gcalBusy] = await Promise.all([
+    db
+      .from('bookings')
+      .select('start_at, end_at, staff, gcal_event_id')
+      .eq('shop_id', shop.id)
+      .eq('status', 'confirmed')
+      .gte('start_at', winStart)
+      .lt('start_at', winEnd),
+    getGCalBusy(c.env, shop, winStart, winEnd),
+  ]);
 
   let staffList: string[];
   try {
@@ -89,6 +93,12 @@ export async function handleCheckAvailability(
   }
 
   const bookings = booked ?? [];
+  // Our own bookings are mirrored into GCal (gcal_event_id); exclude them so a foreign event
+  // (Booksy / manual) blocks all staff while our own only blocks the booked staff via conflicts().
+  const ownEventIds = new Set(
+    bookings.map((b) => b.gcal_event_id).filter((id): id is string => !!id),
+  );
+  const foreignBusy = gcalBusy.filter((b) => !ownEventIds.has(b.id));
   const targets = staff && staff !== 'any' ? [staff] : staffList;
   const slots: AvailableSlot[] = [];
   const nowMs = Date.now();
@@ -100,6 +110,7 @@ export async function handleCheckAvailability(
     const s1 = midnight + (t - offsetMin) * 60_000;
     const s2 = s1 + duration_minutes * 60_000;
     if (s1 <= nowMs) continue; // skip slots that have already started
+    if (foreignBusy.some((b) => b.start < s2 && b.end > s1)) continue; // blocked by a foreign calendar event
     // Emit times in the shop's local offset so the digits the agent reads are the local
     // clock time it should speak and book — not a UTC value it would misread.
     const slotStart = localIso(s1, offsetMin);

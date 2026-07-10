@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { runReminders } from './lib/reminders';
 import { adminRoutes } from './routes/admin';
+import { googleIntegrationRoutes } from './routes/integrations/google';
 import { toolRoutes } from './routes/tools';
 import { twilioRoutes } from './routes/twilio';
 import { webhookRoutes } from './routes/webhooks';
@@ -30,6 +31,7 @@ app.route('/webhooks', webhookRoutes);
 app.route('/twilio', twilioRoutes);
 app.route('/tools', toolRoutes);
 app.route('/admin', adminRoutes);
+app.route('/integrations/google', googleIntegrationRoutes);
 
 export default {
   async fetch(req: Request, env: WorkerBindings, ctx: ExecutionContext): Promise<Response> {

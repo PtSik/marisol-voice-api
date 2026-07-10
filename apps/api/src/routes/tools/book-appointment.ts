@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { gcalCreateEvent, getGCalClient } from '../../lib/gcal';
+import { gcalCreateEvent, getGCalBusy, getGCalClient } from '../../lib/gcal';
 import {
   localIso,
   spokenDateTimeLabel,
@@ -77,6 +77,31 @@ export async function handleBookAppointment(
   const confirmedEnd = localIso(endMs, tzOffsetMinutes(startDateStr, shop.timezone));
 
   const db = getSupabase(c.env);
+
+  // Race guard against foreign calendar events (Booksy / manual GCal entries) — the GiST
+  // EXCLUDE only catches our own bookings. Our mirrored events are deduped by gcal_event_id.
+  if (shop.integration === 'google_calendar' && shop.integration_credentials_encrypted) {
+    const [ownRes, busy] = await Promise.all([
+      db
+        .from('bookings')
+        .select('gcal_event_id')
+        .eq('shop_id', shop.id)
+        .eq('status', 'confirmed')
+        .lt('start_at', endAt)
+        .gt('end_at', start_time),
+      getGCalBusy(c.env, shop, start_time, endAt),
+    ]);
+    const ownEventIds = new Set(
+      (ownRes.data ?? []).map((b) => b.gcal_event_id).filter((id): id is string => !!id),
+    );
+    if (busy.some((b) => !ownEventIds.has(b.id) && b.start < endMs && b.end > startMs)) {
+      return c.json<ElevenLabsToolWebhookResponse>({
+        result: 'That time was just taken. Let me check other options for you.',
+        success: false,
+      });
+    }
+  }
+
   const { data: booking, error } = await db
     .from('bookings')
     .insert({
