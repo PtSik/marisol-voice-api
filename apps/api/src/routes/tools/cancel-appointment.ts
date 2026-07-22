@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { gcalDeleteEvent, getGCalClient } from '../../lib/gcal';
+import { gcalDeleteEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
 import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { cancellationSms, normalizeSmsLanguage, smsWhenLabel } from '../../lib/sms-templates';
@@ -34,7 +34,9 @@ export async function handleCancelAppointment(
   const db = getSupabase(c.env);
   const { data: booking } = await db
     .from('bookings')
-    .select('id, shop_id, customer_phone, staff, start_at, status, gcal_event_id, language')
+    .select(
+      'id, shop_id, customer_phone, staff, start_at, status, gcal_event_id, gcal_calendar_id, language',
+    )
     .eq('id', booking_id)
     .single();
 
@@ -72,11 +74,13 @@ export async function handleCancelAppointment(
   ) {
     const encryptedCreds = shop.integration_credentials_encrypted;
     const eventId = booking.gcal_event_id;
+    // The calendar recorded on the booking wins: the mapping may have changed since.
+    const calendarId = booking.gcal_calendar_id ?? resolveRouting(shop).write_calendar_id;
     c.executionCtx.waitUntil(
       (async () => {
         try {
           const gcal = await getGCalClient(c.env, encryptedCreds);
-          await gcalDeleteEvent(gcal.calendar_id, gcal.token, eventId);
+          await gcalDeleteEvent(calendarId, gcal.token, eventId);
         } catch {
           // non-fatal
         }

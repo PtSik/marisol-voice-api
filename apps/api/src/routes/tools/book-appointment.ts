@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { gcalCreateEvent, getGCalBusy, getGCalClient } from '../../lib/gcal';
+import { gcalCreateEvent, getGCalBusy, getGCalClient, writeCalendarFor } from '../../lib/gcal';
 import {
   type BookingTimeReason,
   localIso,
@@ -14,7 +14,7 @@ import {
   normalizeSmsLanguage,
   smsWhenLabel,
 } from '../../lib/sms-templates';
-import { findStaff } from '../../lib/staff';
+import { resolveStaffForBooking } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import { BOOKING_CODE_TTL_MINUTES, generateCode, storeCode } from '../../lib/verification';
 import type {
@@ -64,12 +64,16 @@ export async function handleBookAppointment(
     });
   }
 
-  const validation = validateBookingTime(
-    shop,
-    start_time,
-    duration_minutes,
-    findStaff(shop.staff_json, staff_name),
-  );
+  const resolved = resolveStaffForBooking(shop.staff_json, staff_name);
+  if ('unknown' in resolved) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: `I don't have anyone by that name. We have ${resolved.unknown.join(', ')} — who would you like?`,
+      success: false,
+    });
+  }
+  const member = resolved.member;
+
+  const validation = validateBookingTime(shop, start_time, duration_minutes, member);
   if (!validation.ok) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: bookingTimeError(validation.reason, staff_name),
@@ -144,20 +148,25 @@ export async function handleBookAppointment(
   // path. The agent's response never depends on it succeeding.
   if (shop.integration === 'google_calendar' && shop.integration_credentials_encrypted) {
     const encryptedCreds = shop.integration_credentials_encrypted;
+    const calendarId = writeCalendarFor(shop, member?.id);
     c.executionCtx.waitUntil(
       (async () => {
         try {
           const gcal = await getGCalClient(c.env, encryptedCreds);
           const gcalEventId = await gcalCreateEvent(
-            gcal.calendar_id,
+            calendarId,
             gcal.token,
-            `${service ?? 'Appointment'} — ${customer_name ?? normalizedPhone}`,
+            `${service ?? 'Appointment'} — ${customer_name ?? normalizedPhone} (${member?.name ?? staff_name})`,
             `Phone: ${normalizedPhone}\nService: ${service ?? 'N/A'}`,
             start_time,
             endAt,
             shop.timezone,
+            booking.id,
           );
-          await db.from('bookings').update({ gcal_event_id: gcalEventId }).eq('id', booking.id);
+          await db
+            .from('bookings')
+            .update({ gcal_event_id: gcalEventId, gcal_calendar_id: calendarId })
+            .eq('id', booking.id);
         } catch {
           // non-fatal — booking already succeeded
         }

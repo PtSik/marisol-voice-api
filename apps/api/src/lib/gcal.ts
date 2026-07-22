@@ -1,4 +1,4 @@
-import type { ShopRow, WorkerBindings } from '../types';
+import type { CalendarRouting, ShopRow, WorkerBindings } from '../types';
 import { decrypt } from './crypto';
 
 interface GCalCreds {
@@ -7,10 +7,12 @@ interface GCalCreds {
   calendar_id: string;
 }
 
+// The OAuth blob holds the secret and nothing else — calendar ids live in
+// shops.calendar_routing. calendar_id is only still read for blobs written before that split.
 interface OAuthCreds {
   type: 'oauth';
   refresh_token: string;
-  calendar_id: string;
+  calendar_id?: string;
 }
 
 type StoredCreds = GCalCreds | OAuthCreds;
@@ -81,7 +83,11 @@ async function getToken(creds: GCalCreds): Promise<string> {
   return token;
 }
 
-async function fetchOAuthToken(env: WorkerBindings, refreshToken: string): Promise<string> {
+async function fetchOAuthToken(
+  env: WorkerBindings,
+  refreshToken: string,
+  signal?: AbortSignal,
+): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const cached = tokenCache.get(refreshToken);
   if (cached && cached.expiresAt > now + 60) return cached.token;
@@ -94,6 +100,7 @@ async function fetchOAuthToken(env: WorkerBindings, refreshToken: string): Promi
       client_id: env.GOOGLE_OAUTH_CLIENT_ID ?? '',
       client_secret: env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
     }),
+    signal: signal ?? null,
   });
   if (!res.ok) throw new Error(`GCal OAuth refresh failed: ${await res.text()}`);
   const { access_token, expires_in } = await res.json<{
@@ -110,14 +117,88 @@ async function fetchOAuthToken(env: WorkerBindings, refreshToken: string): Promi
 export async function getGCalClient(
   env: WorkerBindings,
   encryptedCreds: string,
+  signal?: AbortSignal,
 ): Promise<{ calendar_id: string; token: string }> {
   const creds = JSON.parse(await decrypt(encryptedCreds, env.ENCRYPTION_KEY)) as StoredCreds;
   if ('type' in creds) {
-    const token = await fetchOAuthToken(env, creds.refresh_token);
-    return { calendar_id: creds.calendar_id, token };
+    const token = await fetchOAuthToken(env, creds.refresh_token, signal);
+    return { calendar_id: creds.calendar_id ?? 'primary', token };
   }
   const token = await getToken(creds);
   return { calendar_id: creds.calendar_id, token };
+}
+
+const DEFAULT_ROUTING: CalendarRouting = {
+  write_calendar_id: 'primary',
+  staff_calendars: {},
+  busy_calendar_ids: [],
+  attribution: { mode: 'off' },
+};
+
+// A shop that never used the picker (calendar_routing NULL) keeps today's behaviour: one
+// calendar, every foreign event blocking the whole shop.
+export function resolveRouting(shop: ShopRow): CalendarRouting {
+  const r = shop.calendar_routing;
+  if (!r) return DEFAULT_ROUTING;
+  return {
+    write_calendar_id: r.write_calendar_id || 'primary',
+    staff_calendars: r.staff_calendars ?? {},
+    busy_calendar_ids: r.busy_calendar_ids ?? [],
+    attribution: r.attribution ?? { mode: 'off' },
+  };
+}
+
+// Bookings land in the staff member's own calendar when the shop mapped one; everything
+// else — including a name we couldn't resolve — goes to the main calendar.
+export function writeCalendarFor(shop: ShopRow, staffId?: string): string {
+  const routing = resolveRouting(shop);
+  return (staffId && routing.staff_calendars[staffId]) || routing.write_calendar_id;
+}
+
+export interface GCalCalendar {
+  id: string;
+  summary: string;
+  accessRole: string;
+  primary: boolean;
+}
+
+const WRITABLE_ROLES = new Set(['owner', 'writer']);
+
+export function canWriteTo(calendar: GCalCalendar): boolean {
+  return WRITABLE_ROLES.has(calendar.accessRole);
+}
+
+export async function gcalListCalendars(
+  token: string,
+  signal?: AbortSignal,
+): Promise<GCalCalendar[]> {
+  const url = new URL('https://www.googleapis.com/calendar/v3/users/me/calendarList');
+  url.search = new URLSearchParams({
+    minAccessRole: 'freeBusyReader',
+    maxResults: '250',
+    showHidden: 'false',
+    fields: 'items(id,summary,summaryOverride,accessRole,primary)',
+  }).toString();
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${token}` },
+    signal: signal ?? null,
+  });
+  if (!res.ok) throw new Error(`GCal calendarList.list failed: ${res.status}`);
+  const data = await res.json<{
+    items?: Array<{
+      id: string;
+      summary?: string;
+      summaryOverride?: string;
+      accessRole?: string;
+      primary?: boolean;
+    }>;
+  }>();
+  return (data.items ?? []).map((c) => ({
+    id: c.id,
+    summary: c.summaryOverride ?? c.summary ?? c.id,
+    accessRole: c.accessRole ?? 'reader',
+    primary: c.primary === true,
+  }));
 }
 
 export async function gcalCreateEvent(
@@ -128,6 +209,7 @@ export async function gcalCreateEvent(
   startIso: string,
   endIso: string,
   timeZone: string,
+  bookingId?: string,
 ): Promise<string> {
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
@@ -140,6 +222,9 @@ export async function gcalCreateEvent(
         start: { dateTime: startIso, timeZone },
         end: { dateTime: endIso, timeZone },
         status: 'confirmed',
+        ...(bookingId
+          ? { extendedProperties: { private: { marisol_booking_id: bookingId } } }
+          : {}),
       }),
     },
   );
@@ -249,7 +334,7 @@ export async function getGCalBusy(
   try {
     const gcal = await getGCalClient(env, shop.integration_credentials_encrypted);
     return await gcalListBusy(
-      gcal.calendar_id,
+      resolveRouting(shop).write_calendar_id,
       gcal.token,
       timeMinIso,
       timeMaxIso,

@@ -79,6 +79,19 @@ export function findStaff(staffJson: string, name: string | undefined): StaffMem
   return parseStaff(staffJson).find((m) => m.name.toLowerCase() === wanted);
 }
 
+// A transcription slip ("Luiz" for "Luis") must not become a booking for someone who does
+// not exist: their schedule is never checked and the GiST EXCLUDE, keyed on the staff text,
+// lets a second booking through for the same chair. A shop with an empty roster still books.
+export function resolveStaffForBooking(
+  staffJson: string,
+  name: string | undefined,
+): { member: StaffMember | undefined } | { unknown: string[] } {
+  const roster = parseStaff(staffJson);
+  const member = findStaff(staffJson, name);
+  if (roster.length > 0 && !member) return { unknown: roster.map((m) => m.name) };
+  return { member };
+}
+
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // Names only — the agent must never see staff ids. Members with their own schedule carry

@@ -187,6 +187,20 @@ export interface PostCallAnalysis {
   data_collection_results?: Record<string, { value: unknown }>;
 }
 
+export interface CalendarAttribution {
+  mode: 'off' | 'color' | 'title_prefix';
+  // Google colorId → staff id. Only used with mode 'color'.
+  colors?: Record<string, string>;
+}
+
+export interface CalendarRouting {
+  write_calendar_id: string;
+  // Keyed by staff.id (not name) so renaming a staff member never orphans the mapping.
+  staff_calendars: Record<string, string>;
+  busy_calendar_ids: string[];
+  attribution: CalendarAttribution;
+}
+
 export interface ShopRow {
   id: string;
   name: string;
@@ -202,6 +216,7 @@ export interface ShopRow {
   staff_json: string;
   integration: string;
   integration_credentials_encrypted: string | null;
+  calendar_routing: CalendarRouting | null;
   elevenlabs_agent_id: string | null;
   reminders_enabled: boolean;
   status: string;
@@ -223,6 +238,9 @@ export interface BookingRow {
   notes: string | null;
   cancellation_reason: string | null;
   gcal_event_id: string | null;
+  gcal_calendar_id: string | null;
+  cancelled_via: string | null;
+  gcal_sync_pending: boolean;
   idempotency_key: string | null;
   confirmation_code: string | null;
   language: string;

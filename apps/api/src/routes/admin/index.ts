@@ -3,7 +3,7 @@ import { parseTime } from '../../lib/hours';
 import { parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import { adminAuth } from '../../middleware/admin-auth';
-import type { WorkerBindings } from '../../types';
+import type { CalendarRouting, WorkerBindings } from '../../types';
 
 const MUTABLE_FIELDS = new Set([
   'name',
@@ -18,6 +18,7 @@ const MUTABLE_FIELDS = new Set([
   'services_json',
   'staff_json',
   'integration',
+  'calendar_routing',
   'elevenlabs_agent_id',
   'status',
 ]);
@@ -75,6 +76,61 @@ function validateStaffJson(raw: unknown): { value: string } | { error: string } 
     }
   }
   return { value: JSON.stringify(members) };
+}
+
+// calendar_routing is a real jsonb column, so it goes to Supabase as an object, not a string.
+function validateCalendarRouting(
+  raw: unknown,
+): { value: CalendarRouting | null } | { error: string } {
+  if (raw === null) return { value: null };
+  let parsed: unknown;
+  try {
+    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  } catch {
+    return { error: 'calendar_routing is not valid JSON' };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { error: 'calendar_routing must be an object' };
+  }
+  const r = parsed as Record<string, unknown>;
+  if (typeof r.write_calendar_id !== 'string' || !r.write_calendar_id) {
+    return { error: 'calendar_routing.write_calendar_id must be a non-empty string' };
+  }
+  const staffCalendars: Record<string, string> = {};
+  if (r.staff_calendars !== undefined) {
+    if (!r.staff_calendars || typeof r.staff_calendars !== 'object') {
+      return { error: 'calendar_routing.staff_calendars must be an object' };
+    }
+    for (const [staffId, calendarId] of Object.entries(r.staff_calendars)) {
+      if (typeof calendarId !== 'string' || !calendarId) {
+        return { error: `calendar_routing.staff_calendars.${staffId} must be a calendar id` };
+      }
+      staffCalendars[staffId] = calendarId;
+    }
+  }
+  if (
+    r.busy_calendar_ids !== undefined &&
+    (!Array.isArray(r.busy_calendar_ids) ||
+      r.busy_calendar_ids.some((id) => typeof id !== 'string'))
+  ) {
+    return { error: 'calendar_routing.busy_calendar_ids must be an array of calendar ids' };
+  }
+  const attribution = r.attribution as Record<string, unknown> | undefined;
+  const mode = attribution?.mode ?? 'off';
+  if (mode !== 'off' && mode !== 'color' && mode !== 'title_prefix') {
+    return { error: 'calendar_routing.attribution.mode must be off, color or title_prefix' };
+  }
+  return {
+    value: {
+      write_calendar_id: r.write_calendar_id,
+      staff_calendars: staffCalendars,
+      busy_calendar_ids: (r.busy_calendar_ids as string[] | undefined) ?? [],
+      attribution: {
+        mode,
+        ...(attribution?.colors ? { colors: attribution.colors as Record<string, string> } : {}),
+      },
+    },
+  };
 }
 
 function validateClosuresJson(raw: unknown): { value: string } | { error: string } {
@@ -147,6 +203,44 @@ adminRoutes.post('/shops', async (c) => {
   return c.json({ shop: data }, 201);
 });
 
+export function buildShopUpdate(
+  body: Record<string, unknown>,
+): { update: Record<string, unknown> } | { error: string } {
+  const update: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (!MUTABLE_FIELDS.has(key)) continue;
+    if (key === 'hours_json') {
+      const r = validateHoursJson(value);
+      if ('error' in r) return r;
+      update[key] = r.value;
+    } else if (key === 'closures_json') {
+      const r = validateClosuresJson(value);
+      if ('error' in r) return r;
+      update[key] = r.value;
+    } else if (key === 'staff_json') {
+      const r = validateStaffJson(value);
+      if ('error' in r) return r;
+      update[key] = r.value;
+    } else if (key === 'calendar_routing') {
+      const r = validateCalendarRouting(value);
+      if ('error' in r) return r;
+      update[key] = r.value;
+    } else {
+      update[key] = value;
+    }
+  }
+
+  // Disconnecting the integration must drop the token and the mapping together — a routing
+  // that outlives the token is dead config pointing at calendars we can no longer reach.
+  if (update.integration === 'none') {
+    update.integration_credentials_encrypted = null;
+    update.calendar_routing = null;
+  }
+
+  if (Object.keys(update).length === 0) return { error: 'No updatable fields provided' };
+  return { update };
+}
+
 adminRoutes.patch('/shops/:id', async (c) => {
   let body: Record<string, unknown>;
   try {
@@ -155,29 +249,9 @@ adminRoutes.patch('/shops/:id', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  const update: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(body)) {
-    if (!MUTABLE_FIELDS.has(key)) continue;
-    if (key === 'hours_json') {
-      const r = validateHoursJson(value);
-      if ('error' in r) return c.json({ error: r.error }, 400);
-      update[key] = r.value;
-    } else if (key === 'closures_json') {
-      const r = validateClosuresJson(value);
-      if ('error' in r) return c.json({ error: r.error }, 400);
-      update[key] = r.value;
-    } else if (key === 'staff_json') {
-      const r = validateStaffJson(value);
-      if ('error' in r) return c.json({ error: r.error }, 400);
-      update[key] = r.value;
-    } else {
-      update[key] = value;
-    }
-  }
-
-  if (Object.keys(update).length === 0) {
-    return c.json({ error: 'No updatable fields provided' }, 400);
-  }
+  const built = buildShopUpdate(body);
+  if ('error' in built) return c.json({ error: built.error }, 400);
+  const update = built.update;
 
   const db = getSupabase(c.env);
   const { data, error } = await db

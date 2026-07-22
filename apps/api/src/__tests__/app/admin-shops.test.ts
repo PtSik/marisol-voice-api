@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import worker from '../../index';
-import type { WorkerBindings } from '../../types';
+import { buildShopUpdate } from '../../routes/admin';
+import type { CalendarRouting, WorkerBindings } from '../../types';
 
 // Empty SUPABASE_URL makes the DB call throw, so a request that reaches Supabase
 // surfaces as a 500 — that lets us tell "passed validation" (reached DB → 500) from
@@ -85,5 +86,54 @@ describe('PATCH /admin/shops/:id', () => {
       (await patchShop({ staff_json: [{ id: 'stf_a', name: 'Ana', hours: { Tue: '9am-5pm' } }] }))
         .status,
     ).toBe(500);
+  });
+
+  it('rejects calendar_routing without a write calendar', async () => {
+    const res = await patchShop({ calendar_routing: { staff_calendars: {} } });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('write_calendar_id');
+  });
+});
+
+describe('buildShopUpdate', () => {
+  it('canonicalises calendar_routing and keeps it an object for the jsonb column', () => {
+    const built = buildShopUpdate({
+      calendar_routing: {
+        write_calendar_id: 'primary',
+        staff_calendars: { stf_ana: 'c_ana@group.calendar.google.com' },
+      },
+    });
+    expect('error' in built).toBe(false);
+    if ('error' in built) return;
+    const routing = built.update.calendar_routing as CalendarRouting;
+    expect(routing.staff_calendars).toEqual({ stf_ana: 'c_ana@group.calendar.google.com' });
+    expect(routing.busy_calendar_ids).toEqual([]);
+    expect(routing.attribution).toEqual({ mode: 'off' });
+  });
+
+  it('rejects an unknown attribution mode', () => {
+    const built = buildShopUpdate({
+      calendar_routing: { write_calendar_id: 'primary', attribution: { mode: 'guess' } },
+    });
+    expect('error' in built).toBe(true);
+  });
+
+  it('clears both the credentials blob and the routing when the integration is dropped', () => {
+    const built = buildShopUpdate({ integration: 'none' });
+    expect('error' in built).toBe(false);
+    if ('error' in built) return;
+    expect(built.update).toEqual({
+      integration: 'none',
+      integration_credentials_encrypted: null,
+      calendar_routing: null,
+    });
+  });
+
+  it('ignores fields outside the allowlist', () => {
+    const built = buildShopUpdate({ id: 'spoofed', calendar_routing: null });
+    expect('error' in built).toBe(false);
+    if ('error' in built) return;
+    expect(built.update).toEqual({ calendar_routing: null });
   });
 });

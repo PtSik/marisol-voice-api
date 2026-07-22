@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import { gcalPatchEvent, getGCalClient } from '../../lib/gcal';
+import { gcalPatchEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
 import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import {
@@ -44,7 +44,9 @@ export async function handleRescheduleAppointment(
   const db = getSupabase(c.env);
   const { data: booking } = await db
     .from('bookings')
-    .select('id, shop_id, customer_phone, staff, start_at, end_at, gcal_event_id, status, language')
+    .select(
+      'id, shop_id, customer_phone, staff, start_at, end_at, gcal_event_id, gcal_calendar_id, status, language',
+    )
     .eq('id', booking_id)
     .single();
 
@@ -119,12 +121,13 @@ export async function handleRescheduleAppointment(
   ) {
     const encryptedCreds = shop.integration_credentials_encrypted;
     const eventId = booking.gcal_event_id;
+    const calendarId = booking.gcal_calendar_id ?? resolveRouting(shop).write_calendar_id;
     c.executionCtx.waitUntil(
       (async () => {
         try {
           const gcal = await getGCalClient(c.env, encryptedCreds);
           await gcalPatchEvent(
-            gcal.calendar_id,
+            calendarId,
             gcal.token,
             eventId,
             new_start_time,

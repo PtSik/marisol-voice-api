@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import { getStaffHoursForDate } from '../../lib/hours';
-import { findStaff, parseStaff, staffSummary } from '../../lib/staff';
+import { findStaff, parseStaff, resolveStaffForBooking, staffSummary } from '../../lib/staff';
 import type { ShopRow } from '../../types';
 
 const shop = {
@@ -103,5 +103,30 @@ describe('staff — staffSummary', () => {
 
   it('never leaks ids', () => {
     expect(staffSummary(parseStaff('["Ana"]'))).not.toContain('stf_');
+  });
+});
+
+describe('staff — resolveStaffForBooking', () => {
+  const roster = '[{"id":"stf_ana","name":"Ana"},{"id":"stf_luis","name":"Luis"}]';
+
+  it('resolves a known name to its member', () => {
+    const r = resolveStaffForBooking(roster, 'luis');
+    expect('unknown' in r).toBe(false);
+    expect(('member' in r && r.member?.id) || null).toBe('stf_luis');
+  });
+
+  it('rejects a name that is not on the roster and reports who is', () => {
+    const r = resolveStaffForBooking(roster, 'Luiz');
+    expect(r).toEqual({ unknown: ['Ana', 'Luis'] });
+  });
+
+  it('lets a shop with no roster book anyone', () => {
+    expect(resolveStaffForBooking('[]', 'Whoever')).toEqual({ member: undefined });
+  });
+
+  it('accepts the name the agent may echo back with its schedule note', () => {
+    const withHours = '[{"id":"stf_luis","name":"Luis","hours":{"Tue":"9am-5pm"}}]';
+    const r = resolveStaffForBooking(withHours, 'Luis (works Tue)');
+    expect(('member' in r && r.member?.id) || null).toBe('stf_luis');
   });
 });
