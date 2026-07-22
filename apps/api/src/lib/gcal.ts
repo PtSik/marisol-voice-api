@@ -1,4 +1,5 @@
 import type { CalendarRouting, ShopRow, WorkerBindings } from '../types';
+import { logGcalFailure } from './calendar-alerts';
 import { decrypt } from './crypto';
 
 interface GCalCreds {
@@ -272,6 +273,8 @@ export interface GCalBusy {
   start: number;
   end: number;
   id: string;
+  colorId?: string;
+  summary?: string;
 }
 
 interface GCalEventTime {
@@ -294,7 +297,7 @@ export async function gcalListBusy(
     timeMin: timeMinIso,
     timeMax: timeMaxIso,
     maxResults: '250',
-    fields: 'items(id,start,end,status,transparency)',
+    fields: 'items(id,start,end,status,transparency,colorId,summary)',
   }).toString();
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${token}` },
@@ -306,6 +309,8 @@ export async function gcalListBusy(
       id: string;
       status?: string;
       transparency?: string;
+      colorId?: string;
+      summary?: string;
       start?: GCalEventTime;
       end?: GCalEventTime;
     }>;
@@ -316,32 +321,124 @@ export async function gcalListBusy(
     const s = ev.start?.dateTime ?? ev.start?.date;
     const e = ev.end?.dateTime ?? ev.end?.date;
     if (!s || !e) continue;
-    busy.push({ start: new Date(s).getTime(), end: new Date(e).getTime(), id: ev.id });
+    busy.push({
+      start: new Date(s).getTime(),
+      end: new Date(e).getTime(),
+      id: ev.id,
+      ...(ev.colorId ? { colorId: ev.colorId } : {}),
+      ...(ev.summary ? { summary: ev.summary } : {}),
+    });
   }
   return busy;
 }
 
-// Foreign-event busy for a shop's calendar. Fail-open: any error/timeout yields [] so the
-// voice agent keeps answering from Supabase alone rather than going silent on the line.
-export async function getGCalBusy(
+export interface StaffBusy {
+  // Blocks the whole shop: the main calendar plus any calendar marked busy-only.
+  shared: GCalBusy[];
+  // Blocks one person, keyed by staff.id.
+  perStaff: Record<string, GCalBusy[]>;
+}
+
+export interface BusyReadOptions {
+  timeoutMs?: number;
+  waitUntil?: (promise: Promise<unknown>) => void;
+}
+
+const EMPTY_BUSY: StaffBusy = { shared: [], perStaff: {} };
+
+// One deadline covers the whole read, refresh-token exchange included — an AbortSignal that
+// only wraps events.list leaves the token fetch hanging outside the budget on a cold cache.
+function remainingSignal(deadlineAt: number): AbortSignal {
+  return AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
+}
+
+// Foreign-event busy for a shop's calendars, one events.list per calendar in parallel.
+// Fail-open at two levels: a calendar that errors or times out drops out of the result while
+// the rest stay (allSettled, not all — one slow staff calendar must not blind us to the main
+// one), and a failed token exchange yields empty busy so the agent keeps answering from
+// Supabase alone rather than going silent on the line.
+export async function getStaffBusy(
   env: WorkerBindings,
   shop: ShopRow,
   timeMinIso: string,
   timeMaxIso: string,
-  timeoutMs = 1500,
-): Promise<GCalBusy[]> {
-  if (shop.integration !== 'google_calendar' || !shop.integration_credentials_encrypted) return [];
-  try {
-    const gcal = await getGCalClient(env, shop.integration_credentials_encrypted);
-    return await gcalListBusy(
-      resolveRouting(shop).write_calendar_id,
-      gcal.token,
-      timeMinIso,
-      timeMaxIso,
-      AbortSignal.timeout(timeoutMs),
-    );
-  } catch (err) {
-    console.error('[gcal-busy] fail-open:', err instanceof Error ? err.message : err);
-    return [];
+  options: BusyReadOptions = {},
+): Promise<StaffBusy> {
+  if (shop.integration !== 'google_calendar' || !shop.integration_credentials_encrypted) {
+    return EMPTY_BUSY;
   }
+  const deadlineAt = Date.now() + (options.timeoutMs ?? 1500);
+  const routing = resolveRouting(shop);
+
+  let token: string;
+  try {
+    const gcal = await getGCalClient(
+      env,
+      shop.integration_credentials_encrypted,
+      remainingSignal(deadlineAt),
+    );
+    token = gcal.token;
+  } catch (err) {
+    console.error('[gcal-busy] token fail-open:', err instanceof Error ? err.message : err);
+    reportFailure(env, shop, options, { op: 'token', message: errorMessage(err) });
+    return EMPTY_BUSY;
+  }
+
+  // One request per distinct calendar: a calendar shared by two staff members is read once,
+  // and a staff calendar that is also the write calendar counts as shared for everybody.
+  const staffByCalendar = new Map<string, string[]>();
+  for (const [staffId, calendarId] of Object.entries(routing.staff_calendars)) {
+    if (calendarId === routing.write_calendar_id) continue;
+    staffByCalendar.set(calendarId, [...(staffByCalendar.get(calendarId) ?? []), staffId]);
+  }
+  const sharedIds = new Set([routing.write_calendar_id, ...routing.busy_calendar_ids]);
+  for (const id of sharedIds) staffByCalendar.delete(id);
+
+  const targets = [
+    ...[...sharedIds].map((calendarId) => ({ calendarId, staffIds: [] as string[] })),
+    ...[...staffByCalendar].map(([calendarId, staffIds]) => ({ calendarId, staffIds })),
+  ];
+
+  const results = await Promise.allSettled(
+    targets.map((t) =>
+      gcalListBusy(t.calendarId, token, timeMinIso, timeMaxIso, remainingSignal(deadlineAt)),
+    ),
+  );
+
+  const busy: StaffBusy = { shared: [], perStaff: {} };
+  results.forEach((result, i) => {
+    const target = targets[i];
+    if (!target) return;
+    if (result.status === 'rejected') {
+      console.error(`[gcal-busy] ${target.calendarId} fail-open:`, errorMessage(result.reason));
+      reportFailure(env, shop, options, {
+        op: 'busy',
+        calendar_id: target.calendarId,
+        message: errorMessage(result.reason),
+      });
+      return;
+    }
+    if (target.staffIds.length === 0) {
+      busy.shared.push(...result.value);
+      return;
+    }
+    for (const staffId of target.staffIds) {
+      busy.perStaff[staffId] = [...(busy.perStaff[staffId] ?? []), ...result.value];
+    }
+  });
+  return busy;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function reportFailure(
+  env: WorkerBindings,
+  shop: ShopRow,
+  options: BusyReadOptions,
+  failure: { op: 'busy' | 'token'; calendar_id?: string; message: string },
+): void {
+  const logged = logGcalFailure(env, shop.id, failure);
+  options.waitUntil?.(logged);
 }

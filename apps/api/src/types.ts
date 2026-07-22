@@ -290,6 +290,8 @@ export interface WorkerBindings {
   ADMIN_IP_ALLOWLIST?: string;
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
+  // Unset means calendar failure alerts are off.
+  TEAM_ALERT_PHONE?: string;
 }
 
 export interface WorkerVariables {

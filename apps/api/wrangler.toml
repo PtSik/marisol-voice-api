@@ -24,3 +24,4 @@ ENVIRONMENT = "development"
 # TWILIO_SMS_FROM  (optional shared SMS sender, e.g. verified toll-free; unset → send from each shop's twilio_number)
 # ENCRYPTION_KEY  (32-byte hex string for AES-256-GCM)
 # ADMIN_API_KEYS  (comma-separated list of bearer tokens)
+# TEAM_ALERT_PHONE  (optional; E.164 number that receives Google Calendar failure alerts — unset disables them)

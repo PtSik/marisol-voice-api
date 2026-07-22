@@ -96,3 +96,53 @@ describe('check_availability — per-staff hours', () => {
     ]);
   });
 });
+
+describe('check_availability — per-staff busy calendars', () => {
+  // 14:00Z = 10:00 EDT on this date.
+  const tenToEleven = {
+    start: Date.parse('2099-06-16T14:00:00Z'),
+    end: Date.parse('2099-06-16T15:00:00Z'),
+  };
+
+  it("a manual entry in one member's calendar leaves the other one bookable", () => {
+    const out = buildSlots({
+      shop,
+      date: TUESDAY,
+      durationMinutes: 60,
+      shopHours: SHOP_HOURS,
+      requestedStaff: 'any',
+      bookings: [],
+      foreignBusy: [],
+      perStaffBusy: { stf_ana: [tenToEleven] },
+    });
+    expect(out.find((s) => s.label === '10:00 AM')?.staff_name).toBe('Luis');
+  });
+
+  it('removes the slot entirely for the member whose calendar is blocked', () => {
+    const out = buildSlots({
+      shop,
+      date: TUESDAY,
+      durationMinutes: 60,
+      shopHours: SHOP_HOURS,
+      requestedStaff: 'Ana',
+      bookings: [],
+      foreignBusy: [],
+      perStaffBusy: { stf_ana: [tenToEleven] },
+    });
+    expect(out.map((s) => s.label)).not.toContain('10:00 AM');
+  });
+
+  it('an entry in a shared calendar removes the slot for everyone', () => {
+    const out = buildSlots({
+      shop,
+      date: TUESDAY,
+      durationMinutes: 60,
+      shopHours: SHOP_HOURS,
+      requestedStaff: 'any',
+      bookings: [],
+      foreignBusy: [tenToEleven],
+      perStaffBusy: {},
+    });
+    expect(out.map((s) => s.label)).not.toContain('10:00 AM');
+  });
+});

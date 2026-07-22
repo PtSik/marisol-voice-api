@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { logGcalFailure } from '../../lib/calendar-alerts';
 import { gcalDeleteEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
 import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
@@ -81,8 +82,12 @@ export async function handleCancelAppointment(
         try {
           const gcal = await getGCalClient(c.env, encryptedCreds);
           await gcalDeleteEvent(calendarId, gcal.token, eventId);
-        } catch {
-          // non-fatal
+        } catch (err) {
+          await logGcalFailure(c.env, shop.id, {
+            op: 'write',
+            calendar_id: calendarId,
+            message: err instanceof Error ? err.message : String(err),
+          });
         }
       })(),
     );

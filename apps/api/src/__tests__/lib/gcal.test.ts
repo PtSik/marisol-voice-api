@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it } from 'bun:test';
+import { encrypt } from '../../lib/crypto';
 import {
   canWriteTo,
   gcalCreateEvent,
   gcalListBusy,
   gcalListCalendars,
-  getGCalBusy,
+  getStaffBusy,
   resolveRouting,
   writeCalendarFor,
 } from '../../lib/gcal';
@@ -68,23 +69,126 @@ describe('gcalListBusy', () => {
   });
 });
 
-describe('getGCalBusy', () => {
-  const env = { ENCRYPTION_KEY: 'a'.repeat(64) } as WorkerBindings;
+describe('getStaffBusy', () => {
+  const env = { ENCRYPTION_KEY: 'a'.repeat(64), SUPABASE_URL: '' } as WorkerBindings;
 
-  it('returns [] when the shop has no google_calendar integration', async () => {
+  it('returns nothing when the shop has no google_calendar integration', async () => {
     const shop = {
       integration: 'none',
       integration_credentials_encrypted: null,
     } as unknown as ShopRow;
-    expect(await getGCalBusy(env, shop, 'a', 'b')).toEqual([]);
+    expect(await getStaffBusy(env, shop, 'a', 'b')).toEqual({ shared: [], perStaff: {} });
   });
 
-  it('fails open to [] when credentials cannot be decrypted', async () => {
+  it('fails open when credentials cannot be decrypted', async () => {
     const shop = {
       integration: 'google_calendar',
       integration_credentials_encrypted: 'not-valid-creds',
     } as unknown as ShopRow;
-    expect(await getGCalBusy(env, shop, 'a', 'b')).toEqual([]);
+    expect(await getStaffBusy(env, shop, 'a', 'b')).toEqual({ shared: [], perStaff: {} });
+  });
+
+  async function connectedShop(routing: Partial<CalendarRouting>): Promise<ShopRow> {
+    const creds = await encrypt(
+      JSON.stringify({ type: 'oauth', refresh_token: `rt-${Math.random()}` }),
+      env.ENCRYPTION_KEY,
+    );
+    return {
+      id: 'shop_1',
+      integration: 'google_calendar',
+      integration_credentials_encrypted: creds,
+      calendar_routing: {
+        write_calendar_id: 'c_main',
+        staff_calendars: {},
+        busy_calendar_ids: [],
+        attribution: { mode: 'off' },
+        ...routing,
+      },
+    } as unknown as ShopRow;
+  }
+
+  // Each calendar answers on its own; anything not listed rejects, standing in for a
+  // calendar that errors or runs past the deadline.
+  function mockCalendars(byCalendar: Record<string, unknown[]>) {
+    globalThis.fetch = (async (input: string | URL) => {
+      const url = String(input);
+      if (url.includes('oauth2.googleapis.com')) {
+        return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), {
+          status: 200,
+        });
+      }
+      const match = /calendars\/([^/]+)\/events/.exec(url);
+      const calendarId = decodeURIComponent(match?.[1] ?? '');
+      const items = byCalendar[calendarId];
+      if (!items) return new Response('{}', { status: 500 });
+      return new Response(JSON.stringify({ items }), { status: 200 });
+    }) as unknown as typeof fetch;
+  }
+
+  const event = (id: string, hour: number) => ({
+    id,
+    start: { dateTime: `2026-07-23T${String(hour).padStart(2, '0')}:00:00Z` },
+    end: { dateTime: `2026-07-23T${String(hour + 1).padStart(2, '0')}:00:00Z` },
+  });
+
+  it('splits shared calendars from per-staff ones', async () => {
+    const shop = await connectedShop({
+      staff_calendars: { stf_ana: 'c_ana' },
+      busy_calendar_ids: ['c_holidays'],
+    });
+    mockCalendars({
+      c_main: [event('main1', 9)],
+      c_ana: [event('ana1', 11)],
+      c_holidays: [event('hol1', 13)],
+    });
+    const busy = await getStaffBusy(env, shop, 'a', 'b');
+    expect(busy.shared.map((b) => b.id).sort()).toEqual(['hol1', 'main1']);
+    expect(busy.perStaff.stf_ana?.map((b) => b.id)).toEqual(['ana1']);
+  });
+
+  it('keeps the calendars that answered when one of them fails', async () => {
+    const shop = await connectedShop({ staff_calendars: { stf_ana: 'c_ana' } });
+    mockCalendars({ c_main: [event('main1', 9)] });
+    const busy = await getStaffBusy(env, shop, 'a', 'b');
+    expect(busy.shared.map((b) => b.id)).toEqual(['main1']);
+    expect(busy.perStaff.stf_ana).toBeUndefined();
+  });
+
+  it('treats a staff calendar that is also the write calendar as shared', async () => {
+    const shop = await connectedShop({ staff_calendars: { stf_ana: 'c_main' } });
+    mockCalendars({ c_main: [event('main1', 9)] });
+    const busy = await getStaffBusy(env, shop, 'a', 'b');
+    expect(busy.shared.map((b) => b.id)).toEqual(['main1']);
+    expect(busy.perStaff).toEqual({});
+  });
+
+  it('reads a calendar shared by two staff members once and gives both the result', async () => {
+    const shop = await connectedShop({
+      staff_calendars: { stf_ana: 'c_chair', stf_luis: 'c_chair' },
+    });
+    let calls = 0;
+    mockCalendars({ c_main: [], c_chair: [event('chair1', 9)] });
+    const mocked = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(input).includes('/events')) calls++;
+      return mocked(input as string, init);
+    }) as unknown as typeof fetch;
+    const busy = await getStaffBusy(env, shop, 'a', 'b');
+    expect(calls).toBe(2); // c_main + c_chair, not one per staff member
+    expect(busy.perStaff.stf_ana?.map((b) => b.id)).toEqual(['chair1']);
+    expect(busy.perStaff.stf_luis?.map((b) => b.id)).toEqual(['chair1']);
+  });
+
+  it('fails open when the token exchange runs past the deadline', async () => {
+    const shop = await connectedShop({});
+    globalThis.fetch = ((_input: string | URL, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      })) as unknown as typeof fetch;
+    const started = Date.now();
+    const busy = await getStaffBusy(env, shop, 'a', 'b', { timeoutMs: 60 });
+    expect(busy).toEqual({ shared: [], perStaff: {} });
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 });
 

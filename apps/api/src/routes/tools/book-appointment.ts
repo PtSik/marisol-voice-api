@@ -1,5 +1,13 @@
 import type { Context } from 'hono';
-import { gcalCreateEvent, getGCalBusy, getGCalClient, writeCalendarFor } from '../../lib/gcal';
+import { splitByAttribution } from '../../lib/attribution';
+import { logGcalFailure } from '../../lib/calendar-alerts';
+import {
+  gcalCreateEvent,
+  getGCalClient,
+  getStaffBusy,
+  resolveRouting,
+  writeCalendarFor,
+} from '../../lib/gcal';
 import {
   type BookingTimeReason,
   localIso,
@@ -14,7 +22,7 @@ import {
   normalizeSmsLanguage,
   smsWhenLabel,
 } from '../../lib/sms-templates';
-import { resolveStaffForBooking } from '../../lib/staff';
+import { parseStaff, resolveStaffForBooking } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import { BOOKING_CODE_TTL_MINUTES, generateCode, storeCode } from '../../lib/verification';
 import type {
@@ -100,12 +108,21 @@ export async function handleBookAppointment(
         .eq('status', 'confirmed')
         .lt('start_at', endAt)
         .gt('end_at', start_time),
-      getGCalBusy(c.env, shop, start_time, endAt),
+      getStaffBusy(c.env, shop, start_time, endAt, {
+        waitUntil: (p) => c.executionCtx.waitUntil(p),
+      }),
     ]);
     const ownEventIds = new Set(
       (ownRes.data ?? []).map((b) => b.gcal_event_id).filter((id): id is string => !!id),
     );
-    if (busy.some((b) => !ownEventIds.has(b.id) && b.start < endMs && b.end > startMs)) {
+    const foreign = splitByAttribution(
+      busy.shared.filter((b) => !ownEventIds.has(b.id)),
+      busy.perStaff,
+      resolveRouting(shop).attribution,
+      parseStaff(shop.staff_json),
+    );
+    const blocking = [...foreign.shared, ...(member ? (foreign.perStaff[member.id] ?? []) : [])];
+    if (blocking.some((b) => b.start < endMs && b.end > startMs)) {
       return c.json<ElevenLabsToolWebhookResponse>({
         result: 'That time was just taken. Let me check other options for you.',
         success: false,
@@ -167,8 +184,14 @@ export async function handleBookAppointment(
             .from('bookings')
             .update({ gcal_event_id: gcalEventId, gcal_calendar_id: calendarId })
             .eq('id', booking.id);
-        } catch {
-          // non-fatal — booking already succeeded
+        } catch (err) {
+          // Non-fatal — the booking already succeeded — but silent failure here means the
+          // shop's calendar quietly stops matching reality, so it has to be visible.
+          await logGcalFailure(c.env, shop.id, {
+            op: 'write',
+            calendar_id: calendarId,
+            message: err instanceof Error ? err.message : String(err),
+          });
         }
       })(),
     );

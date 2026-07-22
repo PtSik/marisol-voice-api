@@ -1,5 +1,6 @@
 import type { Context } from 'hono';
-import { getGCalBusy } from '../../lib/gcal';
+import { splitByAttribution } from '../../lib/attribution';
+import { getStaffBusy, resolveRouting } from '../../lib/gcal';
 import {
   getHoursForDate,
   getStaffHoursForDate,
@@ -42,8 +43,11 @@ export function buildSlots(input: {
   requestedStaff: string | undefined;
   bookings: Array<{ start_at: string; end_at: string; staff: string }>;
   foreignBusy: Array<{ start: number; end: number }>;
+  // Keyed by staff.id — a calendar that belongs to one person blocks only them.
+  perStaffBusy?: Record<string, Array<{ start: number; end: number }>>;
 }): AvailableSlot[] {
   const { shop, date, durationMinutes, shopHours, bookings, foreignBusy } = input;
+  const perStaffBusy = input.perStaffBusy ?? {};
   const requested =
     input.requestedStaff && input.requestedStaff !== 'any'
       ? normalizeStaffName(input.requestedStaff)
@@ -85,6 +89,8 @@ export function buildSlots(input: {
 
     for (const { member, hours: own } of targets) {
       if (t < own.open || t + durationMinutes > own.close) continue;
+      const ownBusy = perStaffBusy[member.id] ?? [];
+      if (ownBusy.some((b) => b.start < s2 && b.end > s1)) continue;
       if (!conflicts(s1, s2, member.name, bookings)) {
         slots.push({ start_time: slotStart, end_time: slotEnd, staff_name: member.name, label });
         if (!requested) break;
@@ -143,7 +149,9 @@ export async function handleCheckAvailability(
       .eq('status', 'confirmed')
       .gte('start_at', winStart)
       .lt('start_at', winEnd),
-    getGCalBusy(c.env, shop, winStart, winEnd),
+    getStaffBusy(c.env, shop, winStart, winEnd, {
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    }),
   ]);
 
   const bookings = booked ?? [];
@@ -152,7 +160,12 @@ export async function handleCheckAvailability(
   const ownEventIds = new Set(
     bookings.map((b) => b.gcal_event_id).filter((id): id is string => !!id),
   );
-  const foreignBusy = gcalBusy.filter((b) => !ownEventIds.has(b.id));
+  const foreign = splitByAttribution(
+    gcalBusy.shared.filter((b) => !ownEventIds.has(b.id)),
+    gcalBusy.perStaff,
+    resolveRouting(shop).attribution,
+    parseStaff(shop.staff_json),
+  );
 
   const slots = buildSlots({
     shop,
@@ -161,7 +174,8 @@ export async function handleCheckAvailability(
     shopHours: hours,
     requestedStaff: staff,
     bookings,
-    foreignBusy,
+    foreignBusy: foreign.shared,
+    perStaffBusy: foreign.perStaff,
   });
 
   const soonest = slots[0]?.label;

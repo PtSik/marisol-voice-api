@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { logGcalFailure } from '../../lib/calendar-alerts';
 import { gcalPatchEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
 import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
@@ -134,8 +135,12 @@ export async function handleRescheduleAppointment(
             newEndAt,
             shop.timezone,
           );
-        } catch {
-          // non-fatal
+        } catch (err) {
+          await logGcalFailure(c.env, shop.id, {
+            op: 'write',
+            calendar_id: calendarId,
+            message: err instanceof Error ? err.message : String(err),
+          });
         }
       })(),
     );

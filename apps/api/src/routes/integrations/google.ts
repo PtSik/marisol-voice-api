@@ -9,7 +9,7 @@ import {
 } from '../../lib/gcal';
 import { type StaffMember, parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
-import type { CalendarRouting, ShopRow, WorkerBindings } from '../../types';
+import type { CalendarAttribution, CalendarRouting, ShopRow, WorkerBindings } from '../../types';
 
 // calendar.freebusy is requested but unused: it is granular and harmless, and having it on
 // the consent screen means a later switch to batched free/busy reads needs no re-consent.
@@ -22,6 +22,21 @@ const SCOPE = [
 // Every extra busy calendar is one more API call on every availability question, so the
 // picker caps how many a shop can tick.
 const MAX_BUSY_CALENDARS = 20;
+
+// Google's fixed event palette, by colorId.
+const GOOGLE_EVENT_COLORS: Array<[string, string]> = [
+  ['1', 'Lavender'],
+  ['2', 'Sage'],
+  ['3', 'Grape'],
+  ['4', 'Flamingo'],
+  ['5', 'Banana'],
+  ['6', 'Tangerine'],
+  ['7', 'Peacock'],
+  ['8', 'Graphite'],
+  ['9', 'Blueberry'],
+  ['10', 'Basil'],
+  ['11', 'Tomato'],
+];
 
 // Signed with one of ADMIN_API_KEYS (shared with the landing worker) so only we can
 // mint connect links — a shop_id alone must not be enough to hijack a calendar binding.
@@ -216,6 +231,19 @@ function selectForm(input: {
         }><label for="busy_${i}">${esc(cal.summary)}</label></div>`,
     )
     .join('');
+  const mode = routing.attribution.mode;
+  const colorRows = staff
+    .map((m) => {
+      const selected = Object.entries(routing.attribution.colors ?? {}).find(
+        ([, staffId]) => staffId === m.id,
+      )?.[0];
+      const options = GOOGLE_EVENT_COLORS.map(
+        ([id, name]) =>
+          `<option value="${id}"${id === selected ? ' selected' : ''}>${esc(name)}</option>`,
+      ).join('');
+      return `<label for="color_${esc(m.id)}">${esc(m.name)}</label><select id="color_${esc(m.id)}" name="color_${esc(m.id)}"><option value=""${selected ? '' : ' selected'}>No colour</option>${options}</select>`;
+    })
+    .join('');
 
   return `<h1>Choose your calendars</h1>
 ${input.error ? `<p class="err">${esc(input.error)}</p>` : ''}
@@ -229,6 +257,19 @@ ${staff.length > 0 ? `<h2>Calendar per staff member</h2><p class="note">Optional
 <h2>Also check these for busy times</h2>
 <p class="note">We only read these — nothing is ever written there. Pick up to ${MAX_BUSY_CALENDARS}.</p>
 <fieldset>${busyRows}</fieldset>
+${
+  staff.length > 0
+    ? `<h2>Appointments you enter yourself</h2>
+<p class="note">If we can tell who an entry belongs to, it only blocks that person. Otherwise it blocks everyone — the safe default.</p>
+<fieldset>
+<div class="check"><input type="radio" id="attr_off" name="attribution_mode" value="off"${mode === 'off' ? ' checked' : ''}><label for="attr_off">Blocks everyone (default)</label></div>
+<div class="check"><input type="radio" id="attr_color" name="attribution_mode" value="color"${mode === 'color' ? ' checked' : ''}><label for="attr_color">I colour-code entries by person</label></div>
+<div class="check"><input type="radio" id="attr_title" name="attribution_mode" value="title_prefix"${mode === 'title_prefix' ? ' checked' : ''}><label for="attr_title">I start the title with the person's name (“Ana — haircut”)</label></div>
+</fieldset>
+<p class="note">If you colour-code, tell us whose colour is whose:</p>
+${colorRows}`
+    : ''
+}
 <p class="note">Your staff will see these appointments only if you've shared that calendar with them in Google Calendar. Bookings are always saved here for you either way.</p>
 <button type="submit">Save and finish</button>
 </form>`;
@@ -349,11 +390,24 @@ googleIntegrationRoutes.post('/select', async (c) => {
     return rerender(`Please pick at most ${MAX_BUSY_CALENDARS} calendars to check for busy times.`);
   }
 
+  // A wrong attribution frees a slot rather than holding it, so anything we don't understand
+  // falls back to "blocks everyone".
+  const rawMode = body.attribution_mode;
+  const mode: CalendarAttribution['mode'] =
+    rawMode === 'color' || rawMode === 'title_prefix' ? rawMode : 'off';
+  const colors: Record<string, string> = {};
+  if (mode === 'color') {
+    for (const member of staff) {
+      const picked = body[`color_${member.id}`];
+      if (typeof picked === 'string' && picked) colors[picked] = member.id;
+    }
+  }
+
   const routing: CalendarRouting = {
     write_calendar_id: writeCalendarId,
     staff_calendars: staffCalendars,
     busy_calendar_ids: busyCalendarIds,
-    attribution: current.attribution,
+    attribution: mode === 'color' ? { mode, colors } : { mode },
   };
 
   const { error } = await getSupabase(c.env)
