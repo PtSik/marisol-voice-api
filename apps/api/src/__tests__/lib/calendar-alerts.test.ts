@@ -3,7 +3,11 @@ import { alertLines, classifyFailure, runCalendarAlerts } from '../../lib/calend
 import type { WorkerBindings } from '../../types';
 
 function row(kind: string, shopId = 'shop_1', name = 'Bella Salon') {
-  return { shop_id: shopId, payload: { op: 'busy', kind }, shops: { name, owner_email: 'a@b.c' } };
+  return {
+    shop_id: shopId,
+    payload: { op: 'busy', kind },
+    shops: { name, twilio_number: '+15551230000' },
+  };
 }
 
 describe('classifyFailure', () => {
@@ -48,6 +52,12 @@ describe('alertLines', () => {
 
   it('ignores rows with no shop', () => {
     expect(alertLines([{ shop_id: null, payload: { kind: 'auth' }, shops: null }])).toEqual([]);
+  });
+
+  // Twilio rejects a From that is not a number on the account, so the alert carries the
+  // shop's own Twilio number as sender — sending from the team's phone would never deliver.
+  it("sends from the shop's Twilio number", () => {
+    expect(alertLines([row('auth')])[0]?.from).toBe('+15551230000');
   });
 });
 

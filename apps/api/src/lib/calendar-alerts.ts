@@ -44,15 +44,24 @@ export async function logGcalFailure(
 interface FailureRow {
   shop_id: string | null;
   payload: { op?: string; kind?: string; calendar_id?: string; message?: string } | null;
-  shops: { name: string; owner_email: string } | null;
+  shops: { name: string; twilio_number: string } | null;
 }
 
-export function alertLines(rows: FailureRow[]): Array<{ shopId: string; body: string }> {
-  const byShop = new Map<string, { name: string; auth: number; transient: number }>();
+export interface CalendarAlert {
+  shopId: string;
+  // Twilio rejects a From that isn't a number on the account, so alerts are sent from the
+  // number of the shop they are about — never from the team's own phone.
+  from: string;
+  body: string;
+}
+
+export function alertLines(rows: FailureRow[]): CalendarAlert[] {
+  const byShop = new Map<string, { name: string; from: string; auth: number; transient: number }>();
   for (const row of rows) {
     if (!row.shop_id) continue;
     const entry = byShop.get(row.shop_id) ?? {
       name: row.shops?.name ?? row.shop_id,
+      from: row.shops?.twilio_number ?? '',
       auth: 0,
       transient: 0,
     };
@@ -61,16 +70,18 @@ export function alertLines(rows: FailureRow[]): Array<{ shopId: string; body: st
     byShop.set(row.shop_id, entry);
   }
 
-  const alerts: Array<{ shopId: string; body: string }> = [];
+  const alerts: CalendarAlert[] = [];
   for (const [shopId, entry] of byShop) {
     if (entry.auth > 0) {
       alerts.push({
         shopId,
+        from: entry.from,
         body: `Marisol: ${entry.name} lost Google Calendar access (${entry.auth} auth failure${entry.auth > 1 ? 's' : ''} in the last hour). Their calendar has stopped syncing — reconnect needed.`,
       });
     } else if (entry.transient >= TRANSIENT_ALERT_THRESHOLD) {
       alerts.push({
         shopId,
+        from: entry.from,
         body: `Marisol: ${entry.name} had ${entry.transient} Google Calendar failures in the last hour. Bookings still work; calendar reads/writes are degraded.`,
       });
     }
@@ -89,7 +100,7 @@ export async function runCalendarAlerts(
   const since = new Date(nowMs - 3_600_000).toISOString();
   const { data, error } = await getSupabase(env)
     .from('audit_log')
-    .select('shop_id, payload, shops(name, owner_email)')
+    .select('shop_id, payload, shops(name, twilio_number)')
     .eq('action', 'gcal_failure')
     .gte('created_at', since);
   if (error || !data) {
@@ -101,7 +112,12 @@ export async function runCalendarAlerts(
   let alerted = 0;
   for (const alert of alerts) {
     // The team gets these, not the shop: only we can walk an owner through reconnecting.
-    const sent = await sendSms(env, env.TEAM_ALERT_PHONE, env.TEAM_ALERT_PHONE, alert.body);
+    const from = env.TWILIO_SMS_FROM || alert.from;
+    if (!from) {
+      console.log('[gcal-alert] no sender number for shop', alert.shopId);
+      continue;
+    }
+    const sent = await sendSms(env, from, env.TEAM_ALERT_PHONE, alert.body);
     if (sent) alerted++;
     else console.log('[gcal-alert] send failed for shop', alert.shopId);
   }
