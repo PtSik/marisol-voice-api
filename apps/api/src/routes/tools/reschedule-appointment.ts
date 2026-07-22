@@ -1,12 +1,13 @@
 import type { Context } from 'hono';
 import { gcalPatchEvent, getGCalClient } from '../../lib/gcal';
-import { spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
+import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import {
   normalizeSmsLanguage,
   rescheduleConfirmationSms,
   smsWhenLabel,
 } from '../../lib/sms-templates';
+import { findStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import {
   BOOKING_CODE_TTL_MINUTES,
@@ -63,10 +64,16 @@ export async function handleRescheduleAppointment(
     new_duration_minutes ??
     Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000);
 
-  const validation = validateBookingTime(shop, new_start_time, durationMinutes);
+  const staff = new_staff_name ?? booking.staff;
+  const validation = validateBookingTime(
+    shop,
+    new_start_time,
+    durationMinutes,
+    findStaff(shop.staff_json, staff),
+  );
   if (!validation.ok) {
     return c.json<ElevenLabsToolWebhookResponse>({
-      result: rescheduleTimeError(validation.reason),
+      result: rescheduleTimeError(validation.reason, staff),
       success: false,
     });
   }
@@ -79,7 +86,6 @@ export async function handleRescheduleAppointment(
     });
   }
 
-  const staff = new_staff_name ?? booking.staff;
   const language = normalizeSmsLanguage(params.language ?? booking.language);
   const newEndAt = new Date(
     new Date(new_start_time).getTime() + durationMinutes * 60000,
@@ -174,7 +180,7 @@ function spokenCode(code: string): string {
   return code.split('').join(' ');
 }
 
-function rescheduleTimeError(reason: 'invalid' | 'past' | 'closed' | 'outside_hours'): string {
+function rescheduleTimeError(reason: BookingTimeReason, staffName: string): string {
   switch (reason) {
     case 'past':
       return 'That new time has already passed. Please pick a later time.';
@@ -182,6 +188,8 @@ function rescheduleTimeError(reason: 'invalid' | 'past' | 'closed' | 'outside_ho
       return "We're closed that day. Could we pick another day?";
     case 'outside_hours':
       return "That's outside our opening hours. Let's pick a time while we're open.";
+    case 'staff_away':
+      return `${staffName} isn't working then. I can look at another time or someone else.`;
     default:
       return "That doesn't look like a valid time. Let's pick an available slot.";
   }

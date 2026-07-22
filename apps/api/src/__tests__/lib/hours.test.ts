@@ -82,4 +82,37 @@ describe('hours — validateBookingTime', () => {
       reason: 'closed',
     });
   });
+
+  // 2099-06-16 is a Tuesday, 2099-06-17 a Wednesday.
+  const luis = { id: 'stf_luis', name: 'Luis', hours: { Tue: '10am-2pm' } };
+
+  it('rejects a shop-hours time on a day the staff member is off', () => {
+    expect(validateBookingTime(shop, '2099-06-17T14:00:00-04:00', 30, luis)).toEqual({
+      ok: false,
+      reason: 'staff_away',
+    });
+  });
+
+  it('rejects a time outside the staff hours but inside the shop hours', () => {
+    expect(validateBookingTime(shop, '2099-06-16T09:00:00-04:00', 30, luis)).toEqual({
+      ok: false,
+      reason: 'staff_away',
+    });
+  });
+
+  it('rejects an appointment running past the end of the staff hours', () => {
+    expect(validateBookingTime(shop, '2099-06-16T13:45:00-04:00', 30, luis)).toEqual({
+      ok: false,
+      reason: 'staff_away',
+    });
+  });
+
+  it('accepts a time inside the staff hours', () => {
+    expect(validateBookingTime(shop, '2099-06-16T11:00:00-04:00', 30, luis)).toEqual({ ok: true });
+  });
+
+  it('is unchanged for a member without their own hours', () => {
+    const ana = { id: 'stf_ana', name: 'Ana' };
+    expect(validateBookingTime(shop, '2099-06-17T14:00:00-04:00', 30, ana)).toEqual({ ok: true });
+  });
 });

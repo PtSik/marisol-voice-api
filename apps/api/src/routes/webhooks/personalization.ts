@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { getHoursForDate, isClosed } from '../../lib/hours';
 import { toE164, tryToE164 } from '../../lib/normalize';
+import { parseStaff, staffSummary } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import type {
   ConversationDynamicVariables,
@@ -19,7 +20,7 @@ export function buildPersonalizationData(
     shop_name: shop.name,
     hours_summary: formatSchedule(shop, now),
     services_summary: formatJson(shop.services_json),
-    staff_summary: formatJson(shop.staff_json),
+    staff_summary: staffSummary(parseStaff(shop.staff_json)),
     escalation_phone: shop.escalation_phone,
     ai_disclosure_text: shop.ai_disclosure_text,
     caller_phone: callerPhone,

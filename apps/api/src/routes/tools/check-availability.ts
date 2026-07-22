@@ -2,11 +2,13 @@ import type { Context } from 'hono';
 import { getGCalBusy } from '../../lib/gcal';
 import {
   getHoursForDate,
+  getStaffHoursForDate,
   isClosed,
   localIso,
   spokenTimeLabel,
   tzOffsetMinutes,
 } from '../../lib/hours';
+import { type StaffMember, normalizeStaffName, parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import type {
   AvailableSlot,
@@ -30,6 +32,66 @@ function conflicts(
     if (b1 < s2 && b2 > s1) return true;
   }
   return false;
+}
+
+export function buildSlots(input: {
+  shop: ShopRow;
+  date: string;
+  durationMinutes: number;
+  shopHours: { open: number; close: number };
+  requestedStaff: string | undefined;
+  bookings: Array<{ start_at: string; end_at: string; staff: string }>;
+  foreignBusy: Array<{ start: number; end: number }>;
+}): AvailableSlot[] {
+  const { shop, date, durationMinutes, shopHours, bookings, foreignBusy } = input;
+  const requested =
+    input.requestedStaff && input.requestedStaff !== 'any'
+      ? normalizeStaffName(input.requestedStaff)
+      : null;
+  const staffList = parseStaff(shop.staff_json);
+  // An unknown name still resolves — a shop may take bookings for someone not listed.
+  const candidates: StaffMember[] = requested
+    ? [
+        staffList.find((m) => m.name.toLowerCase() === requested.toLowerCase()) ?? {
+          id: '',
+          name: requested,
+        },
+      ]
+    : staffList;
+  // Staff on a narrower schedule than the shop only get their own window; anyone off
+  // that day drops out entirely.
+  const targets = candidates
+    .map((m) => ({ member: m, hours: getStaffHoursForDate(shop, m, date) }))
+    .filter((t): t is { member: StaffMember; hours: { open: number; close: number } } => !!t.hours);
+
+  const slots: AvailableSlot[] = [];
+  const nowMs = Date.now();
+  const offsetMin = tzOffsetMinutes(date, shop.timezone);
+  const midnight = new Date(`${date}T00:00:00Z`).getTime();
+
+  // The grid is anchored on the shop's opening time so every staff member is offered the
+  // same clock times; each member's own window only trims which of them they can take.
+  for (let t = shopHours.open; t + durationMinutes <= shopHours.close; t += durationMinutes) {
+    // Convert local minutes-from-midnight to UTC milliseconds
+    const s1 = midnight + (t - offsetMin) * 60_000;
+    const s2 = s1 + durationMinutes * 60_000;
+    if (s1 <= nowMs) continue; // skip slots that have already started
+    if (foreignBusy.some((b) => b.start < s2 && b.end > s1)) continue; // blocked by a foreign calendar event
+    // Emit times in the shop's local offset so the digits the agent reads are the local
+    // clock time it should speak and book — not a UTC value it would misread.
+    const slotStart = localIso(s1, offsetMin);
+    const slotEnd = localIso(s2, offsetMin);
+    const label = spokenTimeLabel(s1, shop.timezone);
+
+    for (const { member, hours: own } of targets) {
+      if (t < own.open || t + durationMinutes > own.close) continue;
+      if (!conflicts(s1, s2, member.name, bookings)) {
+        slots.push({ start_time: slotStart, end_time: slotEnd, staff_name: member.name, label });
+        if (!requested) break;
+      }
+    }
+  }
+  return slots;
 }
 
 export async function handleCheckAvailability(
@@ -84,14 +146,6 @@ export async function handleCheckAvailability(
     getGCalBusy(c.env, shop, winStart, winEnd),
   ]);
 
-  let staffList: string[];
-  try {
-    const p = JSON.parse(shop.staff_json);
-    staffList = Array.isArray(p) ? p.map(String) : [];
-  } catch {
-    staffList = [];
-  }
-
   const bookings = booked ?? [];
   // Our own bookings are mirrored into GCal (gcal_event_id); exclude them so a foreign event
   // (Booksy / manual) blocks all staff while our own only blocks the booked staff via conflicts().
@@ -99,31 +153,16 @@ export async function handleCheckAvailability(
     bookings.map((b) => b.gcal_event_id).filter((id): id is string => !!id),
   );
   const foreignBusy = gcalBusy.filter((b) => !ownEventIds.has(b.id));
-  const targets = staff && staff !== 'any' ? [staff] : staffList;
-  const slots: AvailableSlot[] = [];
-  const nowMs = Date.now();
-  const offsetMin = tzOffsetMinutes(date, shop.timezone);
-  const midnight = new Date(`${date}T00:00:00Z`).getTime();
 
-  for (let t = hours.open; t + duration_minutes <= hours.close; t += duration_minutes) {
-    // Convert local minutes-from-midnight to UTC milliseconds
-    const s1 = midnight + (t - offsetMin) * 60_000;
-    const s2 = s1 + duration_minutes * 60_000;
-    if (s1 <= nowMs) continue; // skip slots that have already started
-    if (foreignBusy.some((b) => b.start < s2 && b.end > s1)) continue; // blocked by a foreign calendar event
-    // Emit times in the shop's local offset so the digits the agent reads are the local
-    // clock time it should speak and book — not a UTC value it would misread.
-    const slotStart = localIso(s1, offsetMin);
-    const slotEnd = localIso(s2, offsetMin);
-    const label = spokenTimeLabel(s1, shop.timezone);
-
-    for (const s of targets) {
-      if (!conflicts(s1, s2, s, bookings)) {
-        slots.push({ start_time: slotStart, end_time: slotEnd, staff_name: s, label });
-        if (!staff || staff === 'any') break;
-      }
-    }
-  }
+  const slots = buildSlots({
+    shop,
+    date,
+    durationMinutes: duration_minutes,
+    shopHours: hours,
+    requestedStaff: staff,
+    bookings,
+    foreignBusy,
+  });
 
   const soonest = slots[0]?.label;
   return c.json<ElevenLabsToolWebhookResponse>({

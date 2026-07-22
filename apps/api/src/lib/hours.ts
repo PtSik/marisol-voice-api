@@ -1,6 +1,26 @@
 import type { ShopRow } from '../types';
+import type { StaffMember } from './staff';
 
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+export function dayIndexFromName(token: string): number {
+  const t = token.trim().toLowerCase();
+  return DAY_NAMES.findIndex((d) => d.toLowerCase() === t);
+}
+
+// An hours key is either a single day ("Sun") or an inclusive range ("Mon-Fri"),
+// which may wrap around the week ("Sat-Sun"). Matching is case-insensitive so both
+// {"Tue":…} and {"tue":…} resolve.
+export function keyMatchesDay(key: string, dayIndex: number): boolean {
+  const [firstDay, lastDay] = key.split('-');
+  if (!firstDay) return false;
+  const from = dayIndexFromName(firstDay);
+  if (from < 0) return false;
+  if (!lastDay) return from === dayIndex;
+  const to = dayIndexFromName(lastDay);
+  if (to < 0) return false;
+  return from <= to ? dayIndex >= from && dayIndex <= to : dayIndex >= from || dayIndex <= to;
+}
 
 export function parseTime(s: string): number {
   const m = s.trim().match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)$/i);
@@ -35,34 +55,32 @@ export function getHoursForDate(
   if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return null;
 
   const dayIndex = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
-  const dayName = DAY_NAMES[dayIndex];
-  if (!dayName) return null;
 
   for (const [key, value] of Object.entries(parsed as Record<string, string>)) {
-    const [firstDay, lastDay] = key.split('-');
-    if (!firstDay) continue;
-
-    let match = false;
-    if (!lastDay) {
-      match = firstDay.trim() === dayName;
-    } else {
-      const from = DAY_NAMES.indexOf(firstDay.trim());
-      const to = DAY_NAMES.indexOf(lastDay.trim());
-      if (from >= 0 && to >= 0) {
-        match =
-          from <= to ? dayIndex >= from && dayIndex <= to : dayIndex >= from || dayIndex <= to;
-      }
-    }
-
-    if (match) {
-      const [openStr, closeStr] = value.split('-');
-      if (!openStr || !closeStr) continue;
-      const open = parseTime(openStr);
-      const close = parseTime(closeStr);
-      if (open >= 0 && close > open) return { open, close };
-    }
+    if (!keyMatchesDay(key, dayIndex)) continue;
+    const [openStr, closeStr] = value.split('-');
+    if (!openStr || !closeStr) continue;
+    const open = parseTime(openStr);
+    const close = parseTime(closeStr);
+    if (open >= 0 && close > open) return { open, close };
   }
   return null;
+}
+
+// A staff member's own hours narrow the shop's, never widen them. No own hours means
+// the shop's hours apply unchanged. Null means the member isn't working that day.
+export function getStaffHoursForDate(
+  shop: ShopRow,
+  member: StaffMember | undefined,
+  dateStr: string,
+): { open: number; close: number } | null {
+  const shopHours = getHoursForDate(shop.hours_json, dateStr);
+  if (!shopHours || !member?.hours) return shopHours;
+  const own = getHoursForDate(JSON.stringify(member.hours), dateStr);
+  if (!own) return null;
+  const open = Math.max(shopHours.open, own.open);
+  const close = Math.min(shopHours.close, own.close);
+  return close > open ? { open, close } : null;
 }
 
 export function isClosed(closuresJson: string, dateStr: string): boolean {
@@ -134,16 +152,18 @@ export function spokenDateTimeLabel(utcMs: number, timezone: string): string {
   return `${day} at ${time}`;
 }
 
-export type BookingTimeValidation =
-  | { ok: true }
-  | { ok: false; reason: 'invalid' | 'past' | 'closed' | 'outside_hours' };
+export type BookingTimeReason = 'invalid' | 'past' | 'closed' | 'outside_hours' | 'staff_away';
+
+export type BookingTimeValidation = { ok: true } | { ok: false; reason: BookingTimeReason };
 
 // Server-side guard: a booking time must be parseable, in the future, on an open day,
-// and inside the shop's hours. Defends against a mis-read or hallucinated time.
+// inside the shop's hours, and inside the chosen staff member's own hours if they have
+// any. Defends against a mis-read or hallucinated time.
 export function validateBookingTime(
   shop: ShopRow,
   startIso: string,
   durationMin: number,
+  member?: StaffMember,
 ): BookingTimeValidation {
   const startMs = new Date(startIso).getTime();
   if (Number.isNaN(startMs)) return { ok: false, reason: 'invalid' };
@@ -160,6 +180,13 @@ export function validateBookingTime(
   const localMin = (startMs - midnight) / 60_000 + offsetMin;
   if (localMin < hours.open || localMin + durationMin > hours.close) {
     return { ok: false, reason: 'outside_hours' };
+  }
+
+  if (member?.hours) {
+    const own = getStaffHoursForDate(shop, member, dateStr);
+    if (!own || localMin < own.open || localMin + durationMin > own.close) {
+      return { ok: false, reason: 'staff_away' };
+    }
   }
   return { ok: true };
 }

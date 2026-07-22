@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { gcalCreateEvent, getGCalBusy, getGCalClient } from '../../lib/gcal';
 import {
+  type BookingTimeReason,
   localIso,
   spokenDateTimeLabel,
   tzOffsetMinutes,
@@ -13,6 +14,7 @@ import {
   normalizeSmsLanguage,
   smsWhenLabel,
 } from '../../lib/sms-templates';
+import { findStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import { BOOKING_CODE_TTL_MINUTES, generateCode, storeCode } from '../../lib/verification';
 import type {
@@ -62,10 +64,15 @@ export async function handleBookAppointment(
     });
   }
 
-  const validation = validateBookingTime(shop, start_time, duration_minutes);
+  const validation = validateBookingTime(
+    shop,
+    start_time,
+    duration_minutes,
+    findStaff(shop.staff_json, staff_name),
+  );
   if (!validation.ok) {
     return c.json<ElevenLabsToolWebhookResponse>({
-      result: bookingTimeError(validation.reason),
+      result: bookingTimeError(validation.reason, staff_name),
       success: false,
     });
   }
@@ -198,7 +205,7 @@ function spokenCode(code: string): string {
   return code.split('').join(' ');
 }
 
-function bookingTimeError(reason: 'invalid' | 'past' | 'closed' | 'outside_hours'): string {
+function bookingTimeError(reason: BookingTimeReason, staffName: string): string {
   switch (reason) {
     case 'past':
       return 'That time has already passed. Let me find the next opening for you.';
@@ -206,6 +213,8 @@ function bookingTimeError(reason: 'invalid' | 'past' | 'closed' | 'outside_hours
       return "We're closed that day. Could we pick another day?";
     case 'outside_hours':
       return "That's outside our opening hours. Let's pick a time while we're open.";
+    case 'staff_away':
+      return `${staffName} isn't working then. I can look at another time or someone else.`;
     default:
       return "That doesn't look like a valid time. Let's pick one of the available slots.";
   }

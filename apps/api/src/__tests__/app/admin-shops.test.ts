@@ -59,4 +59,31 @@ describe('PATCH /admin/shops/:id', () => {
     });
     expect(res.status).toBe(500);
   });
+
+  it('rejects staff_json that is not an array', async () => {
+    const res = await patchShop({ staff_json: { name: 'Ana' } });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a staff member without a name', async () => {
+    const res = await patchShop({ staff_json: [{ id: 'stf_x' }] });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('name');
+  });
+
+  it('rejects un-parseable staff hours', async () => {
+    const res = await patchShop({ staff_json: [{ name: 'Luis', hours: { Tue: '9-5' } }] });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('staff_json');
+  });
+
+  it('accepts both the legacy and the object staff shape (reaches the DB)', async () => {
+    expect((await patchShop({ staff_json: ['Ana', 'Luis'] })).status).toBe(500);
+    expect(
+      (await patchShop({ staff_json: [{ id: 'stf_a', name: 'Ana', hours: { Tue: '9am-5pm' } }] }))
+        .status,
+    ).toBe(500);
+  });
 });
