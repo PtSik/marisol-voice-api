@@ -249,6 +249,13 @@ export interface BookingRow {
   updated_at: string;
 }
 
+export interface CalendarSyncStateRow {
+  shop_id: string;
+  calendar_id: string;
+  sync_token: string | null;
+  synced_at: string;
+}
+
 export interface CallbackRow {
   id: string;
   shop_id: string;

@@ -59,6 +59,22 @@ describe('alertLines', () => {
   it("sends from the shop's Twilio number", () => {
     expect(alertLines([row('auth')])[0]?.from).toBe('+15551230000');
   });
+
+  it('alerts on the first move conflict — calendar and register stay divorced until fixed', () => {
+    const alerts = alertLines([
+      { ...row('transient'), action: 'gcal_move_conflict', payload: { booking_id: 'bk_1' } },
+    ]);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]?.body).toContain('move');
+  });
+
+  it('reports a move conflict alongside failure alerts for the same shop', () => {
+    const alerts = alertLines([
+      { ...row('auth'), action: 'gcal_failure' },
+      { ...row('transient'), action: 'gcal_move_conflict', payload: {} },
+    ]);
+    expect(alerts).toHaveLength(2);
+  });
 });
 
 describe('runCalendarAlerts', () => {

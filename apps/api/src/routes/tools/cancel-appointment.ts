@@ -59,20 +59,22 @@ export async function handleCancelAppointment(
     });
   }
 
+  const hasCalendar =
+    shop.integration === 'google_calendar' && !!shop.integration_credentials_encrypted;
+
   await db
     .from('bookings')
     .update({
       status: 'cancelled',
       updated_at: new Date().toISOString(),
       cancellation_reason: reason ?? null,
+      // The repair cron reaches even an event whose id never made it to the DB, via the
+      // deterministic event id — so the flag goes up whenever the shop has a calendar.
+      ...(hasCalendar ? { gcal_sync_pending: true } : {}),
     })
     .eq('id', booking_id);
 
-  if (
-    shop.integration === 'google_calendar' &&
-    shop.integration_credentials_encrypted &&
-    booking.gcal_event_id
-  ) {
+  if (hasCalendar && shop.integration_credentials_encrypted && booking.gcal_event_id) {
     const encryptedCreds = shop.integration_credentials_encrypted;
     const eventId = booking.gcal_event_id;
     // The calendar recorded on the booking wins: the mapping may have changed since.
@@ -82,6 +84,10 @@ export async function handleCancelAppointment(
         try {
           const gcal = await getGCalClient(c.env, encryptedCreds);
           await gcalDeleteEvent(calendarId, gcal.token, eventId);
+          await db
+            .from('bookings')
+            .update({ gcal_event_id: null, gcal_sync_pending: false })
+            .eq('id', booking_id);
         } catch (err) {
           await logGcalFailure(c.env, shop.id, {
             op: 'write',

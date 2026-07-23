@@ -2,6 +2,7 @@ import type { Context } from 'hono';
 import { splitByAttribution } from '../../lib/attribution';
 import { logGcalFailure } from '../../lib/calendar-alerts';
 import {
+  deterministicEventId,
   gcalCreateEvent,
   getGCalClient,
   getStaffBusy,
@@ -145,6 +146,10 @@ export async function handleBookAppointment(
       idempotency_key:
         conversationId && !conversationId.includes('{{') ? `${conversationId}:${start_time}` : null,
       status: 'confirmed',
+      // Set before the calendar write, cleared on its success — a swallowed failure or a
+      // killed isolate leaves it up for the repair cron to finish the job.
+      gcal_sync_pending:
+        shop.integration === 'google_calendar' && !!shop.integration_credentials_encrypted,
     })
     .select()
     .single();
@@ -179,11 +184,19 @@ export async function handleBookAppointment(
             endAt,
             shop.timezone,
             booking.id,
+            deterministicEventId(booking.id),
           );
+          // Guarded on status: a cancel landing mid-flight re-raises the flag, and clearing
+          // it here would strand the just-created event with nothing left to repair it.
           await db
             .from('bookings')
-            .update({ gcal_event_id: gcalEventId, gcal_calendar_id: calendarId })
-            .eq('id', booking.id);
+            .update({
+              gcal_event_id: gcalEventId,
+              gcal_calendar_id: calendarId,
+              gcal_sync_pending: false,
+            })
+            .eq('id', booking.id)
+            .eq('status', 'confirmed');
         } catch (err) {
           // Non-fatal — the booking already succeeded — but silent failure here means the
           // shop's calendar quietly stops matching reality, so it has to be visible.

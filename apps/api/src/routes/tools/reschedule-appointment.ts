@@ -94,6 +94,9 @@ export async function handleRescheduleAppointment(
     new Date(new_start_time).getTime() + durationMinutes * 60000,
   ).toISOString();
 
+  const hasCalendar =
+    shop.integration === 'google_calendar' && !!shop.integration_credentials_encrypted;
+
   const { error } = await db
     .from('bookings')
     .update({
@@ -102,6 +105,9 @@ export async function handleRescheduleAppointment(
       staff,
       language,
       updated_at: new Date().toISOString(),
+      // Also covers a booking whose original create failed: the repair cron will create
+      // the event at the new time instead of patching a missing one.
+      ...(hasCalendar ? { gcal_sync_pending: true } : {}),
     })
     .eq('id', booking_id);
 
@@ -115,11 +121,7 @@ export async function handleRescheduleAppointment(
     });
   }
 
-  if (
-    shop.integration === 'google_calendar' &&
-    shop.integration_credentials_encrypted &&
-    booking.gcal_event_id
-  ) {
+  if (hasCalendar && shop.integration_credentials_encrypted && booking.gcal_event_id) {
     const encryptedCreds = shop.integration_credentials_encrypted;
     const eventId = booking.gcal_event_id;
     const calendarId = booking.gcal_calendar_id ?? resolveRouting(shop).write_calendar_id;
@@ -135,6 +137,13 @@ export async function handleRescheduleAppointment(
             newEndAt,
             shop.timezone,
           );
+          // Guarded on status: a cancel landing mid-flight re-raises the flag for the
+          // repair cron, and this clear must not race it back down.
+          await db
+            .from('bookings')
+            .update({ gcal_sync_pending: false })
+            .eq('id', booking_id)
+            .eq('status', 'confirmed');
         } catch (err) {
           await logGcalFailure(c.env, shop.id, {
             op: 'write',

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import { runCalendarAlerts } from './lib/calendar-alerts';
+import { runCalendarSync } from './lib/calendar-sync';
 import { runReminders } from './lib/reminders';
 import { adminRoutes } from './routes/admin';
 import { googleIntegrationRoutes } from './routes/integrations/google';
@@ -38,7 +39,15 @@ export default {
   async fetch(req: Request, env: WorkerBindings, ctx: ExecutionContext): Promise<Response> {
     return app.fetch(req, env, ctx);
   },
-  async scheduled(_controller: ScheduledController, env: WorkerBindings, ctx: ExecutionContext) {
+  async scheduled(controller: ScheduledController, env: WorkerBindings, ctx: ExecutionContext) {
+    if (controller.cron === '*/15 * * * *') {
+      ctx.waitUntil(
+        runCalendarSync(env)
+          .then((r) => console.log('[gcal-sync] tick:', JSON.stringify(r)))
+          .catch((err) => console.error('[gcal-sync] tick failed:', err)),
+      );
+      return;
+    }
     // allSettled, not all: a failing alert send must not take the reminders down with it.
     ctx.waitUntil(
       Promise.allSettled([

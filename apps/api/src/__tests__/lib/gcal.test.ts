@@ -1,10 +1,14 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import { encrypt } from '../../lib/crypto';
 import {
+  GCalHttpError,
   canWriteTo,
   gcalCreateEvent,
+  gcalDeleteEvent,
+  gcalGetEvent,
   gcalListBusy,
   gcalListCalendars,
+  gcalListDeltas,
   getStaffBusy,
   resolveRouting,
   writeCalendarFor,
@@ -303,5 +307,114 @@ describe('gcalCreateEvent', () => {
     }) as unknown as typeof fetch;
     await gcalCreateEvent('primary', 'tok', 's', 'd', 'a', 'b', 'UTC');
     expect(sent.extendedProperties).toBeUndefined();
+  });
+
+  it('sends a client-supplied event id and surfaces a collision as a typed 409', async () => {
+    let sent: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      sent = JSON.parse(String(init.body));
+      return new Response('{}', { status: 409 });
+    }) as unknown as typeof fetch;
+    const err = await gcalCreateEvent(
+      'primary',
+      'tok',
+      's',
+      'd',
+      'a',
+      'b',
+      'UTC',
+      'bk_1',
+      'abc123',
+    ).catch((e) => e);
+    expect(sent.id).toBe('abc123');
+    expect(err).toBeInstanceOf(GCalHttpError);
+    expect((err as GCalHttpError).status).toBe(409);
+  });
+});
+
+describe('gcalGetEvent', () => {
+  it('returns the event snapshot', async () => {
+    mockFetch(200, { id: 'evt_1', status: 'cancelled' });
+    expect(await gcalGetEvent('primary', 'tok', 'evt_1')).toEqual({
+      id: 'evt_1',
+      status: 'cancelled',
+    });
+  });
+
+  it('returns null for an event that never existed', async () => {
+    mockFetch(404, {});
+    expect(await gcalGetEvent('primary', 'tok', 'nope')).toBeNull();
+  });
+});
+
+describe('gcalDeleteEvent', () => {
+  it('treats an already-gone event as success', async () => {
+    mockFetch(404, {});
+    await gcalDeleteEvent('primary', 'tok', 'nope');
+    mockFetch(410, {});
+    await gcalDeleteEvent('primary', 'tok', 'gone');
+  });
+});
+
+describe('gcalListDeltas', () => {
+  function captureUrl(status: number, body: unknown): { url: () => string } {
+    let captured = '';
+    globalThis.fetch = (async (input: string | URL) => {
+      captured = String(input);
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof fetch;
+    return { url: () => captured };
+  }
+
+  it('first sync passes timeMin and the fixed sync parameters', async () => {
+    const req = captureUrl(200, { items: [], nextSyncToken: 'st_1' });
+    const page = await gcalListDeltas('primary', 'tok', { timeMinIso: '2026-07-22T12:00:00Z' });
+    const params = new URL(req.url()).searchParams;
+    expect(params.get('timeMin')).toBe('2026-07-22T12:00:00Z');
+    expect(params.get('singleEvents')).toBe('false');
+    expect(params.get('showDeleted')).toBe('true');
+    expect(params.get('syncToken')).toBeNull();
+    expect(page.nextSyncToken).toBe('st_1');
+  });
+
+  it('incremental sync passes the token and never timeMin — they are incompatible', async () => {
+    const req = captureUrl(200, { items: [], nextSyncToken: 'st_2' });
+    await gcalListDeltas('primary', 'tok', { syncToken: 'st_1', timeMinIso: 'ignored' });
+    const params = new URL(req.url()).searchParams;
+    expect(params.get('syncToken')).toBe('st_1');
+    expect(params.get('timeMin')).toBeNull();
+  });
+
+  it('maps the booking id out of extendedProperties and keeps skeleton deltas', async () => {
+    captureUrl(200, {
+      items: [
+        {
+          id: 'evt_1',
+          status: 'confirmed',
+          start: { dateTime: '2026-07-23T15:00:00Z' },
+          end: { dateTime: '2026-07-23T15:30:00Z' },
+          extendedProperties: { private: { marisol_booking_id: 'bk_1' } },
+        },
+        { id: 'evt_2', status: 'cancelled' },
+      ],
+    });
+    const page = await gcalListDeltas('primary', 'tok', { syncToken: 'st_1' });
+    expect(page.events).toEqual([
+      {
+        id: 'evt_1',
+        status: 'confirmed',
+        start: { dateTime: '2026-07-23T15:00:00Z' },
+        end: { dateTime: '2026-07-23T15:30:00Z' },
+        bookingId: 'bk_1',
+      },
+      { id: 'evt_2', status: 'cancelled' },
+    ]);
+  });
+
+  it('surfaces an expired sync token as a typed 410', async () => {
+    captureUrl(410, {});
+    const err = await gcalListDeltas('primary', 'tok', { syncToken: 'st_old' }).catch((e) => e);
+    expect(err).toBeInstanceOf(GCalHttpError);
+    expect((err as GCalHttpError).status).toBe(410);
   });
 });

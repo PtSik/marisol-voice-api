@@ -202,6 +202,22 @@ export async function gcalListCalendars(
   }));
 }
 
+export class GCalHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+// Google accepts a client-supplied event id (base32hex); a UUID with the dashes stripped
+// fits. Both the happy-path create and the repair retry use the same id, so a retry can
+// never duplicate an event — a collision comes back as 409 instead.
+export function deterministicEventId(bookingId: string): string {
+  return bookingId.toLowerCase().replace(/-/g, '');
+}
+
 export async function gcalCreateEvent(
   calendarId: string,
   token: string,
@@ -211,6 +227,7 @@ export async function gcalCreateEvent(
   endIso: string,
   timeZone: string,
   bookingId?: string,
+  eventId?: string,
 ): Promise<string> {
   const res = await fetch(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
@@ -218,6 +235,7 @@ export async function gcalCreateEvent(
       method: 'POST',
       headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        ...(eventId ? { id: eventId } : {}),
         summary,
         description,
         start: { dateTime: startIso, timeZone },
@@ -229,7 +247,7 @@ export async function gcalCreateEvent(
       }),
     },
   );
-  if (!res.ok) throw new Error(`GCal events.insert failed: ${res.status}`);
+  if (!res.ok) throw new GCalHttpError(res.status, `GCal events.insert failed: ${res.status}`);
   const { id } = await res.json<{ id: string }>();
   return id;
 }
@@ -243,8 +261,31 @@ export async function gcalDeleteEvent(
     `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
     { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } },
   );
-  if (res.status === 204 || res.status === 200 || res.status === 410) return;
-  throw new Error(`GCal events.delete failed: ${res.status}`);
+  // 404/410 mean the event is already gone — for a delete that is success.
+  if (res.status === 204 || res.status === 200 || res.status === 404 || res.status === 410) return;
+  throw new GCalHttpError(res.status, `GCal events.delete failed: ${res.status}`);
+}
+
+export interface GCalEventSnapshot {
+  id: string;
+  status: string;
+  start?: GCalEventTime;
+  end?: GCalEventTime;
+}
+
+export async function gcalGetEvent(
+  calendarId: string,
+  token: string,
+  eventId: string,
+): Promise<GCalEventSnapshot | null> {
+  const url = new URL(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${eventId}`,
+  );
+  url.search = new URLSearchParams({ fields: 'id,status,start,end' }).toString();
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new GCalHttpError(res.status, `GCal events.get failed: ${res.status}`);
+  return res.json<GCalEventSnapshot>();
 }
 
 export async function gcalPatchEvent(
@@ -266,7 +307,7 @@ export async function gcalPatchEvent(
       }),
     },
   );
-  if (!res.ok) throw new Error(`GCal events.patch failed: ${res.status}`);
+  if (!res.ok) throw new GCalHttpError(res.status, `GCal events.patch failed: ${res.status}`);
 }
 
 export interface GCalBusy {
@@ -277,7 +318,7 @@ export interface GCalBusy {
   summary?: string;
 }
 
-interface GCalEventTime {
+export interface GCalEventTime {
   dateTime?: string;
   date?: string;
 }
@@ -330,6 +371,72 @@ export async function gcalListBusy(
     });
   }
   return busy;
+}
+
+export interface GCalDeltaEvent {
+  id: string;
+  status: string;
+  start?: GCalEventTime;
+  end?: GCalEventTime;
+  bookingId?: string;
+}
+
+export interface GCalDeltaPage {
+  events: GCalDeltaEvent[];
+  nextPageToken?: string;
+  nextSyncToken?: string;
+}
+
+// Incremental sync read. Parameters must be identical on every call for a given calendar
+// (Google rejects a mismatch with 400): singleEvents=false so recurring masters come back
+// as one event, showDeleted=true so deletions appear as status 'cancelled'. timeMin is only
+// legal on the first sync (no syncToken) — the token remembers the restriction. An expired
+// token surfaces as GCalHttpError(410); the caller restarts from scratch.
+export async function gcalListDeltas(
+  calendarId: string,
+  token: string,
+  opts: { syncToken?: string; pageToken?: string; timeMinIso?: string },
+): Promise<GCalDeltaPage> {
+  const url = new URL(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events`,
+  );
+  const params = new URLSearchParams({
+    singleEvents: 'false',
+    showDeleted: 'true',
+    maxResults: '250',
+    fields: 'nextPageToken,nextSyncToken,items(id,status,start,end,extendedProperties/private)',
+  });
+  if (opts.syncToken) params.set('syncToken', opts.syncToken);
+  else if (opts.timeMinIso) params.set('timeMin', opts.timeMinIso);
+  if (opts.pageToken) params.set('pageToken', opts.pageToken);
+  url.search = params.toString();
+
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) throw new GCalHttpError(res.status, `GCal events.list (sync) failed: ${res.status}`);
+  const data = await res.json<{
+    nextPageToken?: string;
+    nextSyncToken?: string;
+    items?: Array<{
+      id: string;
+      status?: string;
+      start?: GCalEventTime;
+      end?: GCalEventTime;
+      extendedProperties?: { private?: Record<string, string> };
+    }>;
+  }>();
+  return {
+    events: (data.items ?? []).map((ev) => ({
+      id: ev.id,
+      status: ev.status ?? 'confirmed',
+      ...(ev.start ? { start: ev.start } : {}),
+      ...(ev.end ? { end: ev.end } : {}),
+      ...(ev.extendedProperties?.private?.marisol_booking_id
+        ? { bookingId: ev.extendedProperties.private.marisol_booking_id }
+        : {}),
+    })),
+    ...(data.nextPageToken ? { nextPageToken: data.nextPageToken } : {}),
+    ...(data.nextSyncToken ? { nextSyncToken: data.nextSyncToken } : {}),
+  };
 }
 
 export interface StaffBusy {

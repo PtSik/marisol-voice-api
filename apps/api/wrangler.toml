@@ -8,7 +8,8 @@ minify = true
 enabled = true
 
 [triggers]
-crons = ["0 * * * *"]
+# Hourly: reminders + calendar failure alerts. Every 15 min: two-way calendar sync.
+crons = ["0 * * * *", "*/15 * * * *"]
 
 [vars]
 SUPABASE_URL = "https://ypvlndfdszdinvpebumb.supabase.co"

@@ -2,7 +2,7 @@ import type { WorkerBindings } from '../types';
 import { sendSms } from './sms';
 import { getSupabase } from './supabase';
 
-export type GcalFailureOp = 'busy' | 'write' | 'token';
+export type GcalFailureOp = 'busy' | 'write' | 'token' | 'sync';
 export type GcalFailureKind = 'auth' | 'transient';
 
 export interface GcalFailure {
@@ -41,8 +41,25 @@ export async function logGcalFailure(
   }
 }
 
+// A calendar-driven move that collides with another booking cannot be applied — calendar
+// and Supabase stay divorced until a human steps in, so it must never be a quiet log line.
+export async function logGcalMoveConflict(
+  env: WorkerBindings,
+  shopId: string,
+  payload: { booking_id: string; calendar_id: string; start_at: string; end_at: string },
+): Promise<void> {
+  try {
+    await getSupabase(env)
+      .from('audit_log')
+      .insert({ shop_id: shopId, actor: 'system', action: 'gcal_move_conflict', payload });
+  } catch (err) {
+    console.error('[gcal-alert] log failed:', err instanceof Error ? err.message : err);
+  }
+}
+
 interface FailureRow {
   shop_id: string | null;
+  action?: string;
   payload: { op?: string; kind?: string; calendar_id?: string; message?: string } | null;
   shops: { name: string; twilio_number: string } | null;
 }
@@ -56,7 +73,10 @@ export interface CalendarAlert {
 }
 
 export function alertLines(rows: FailureRow[]): CalendarAlert[] {
-  const byShop = new Map<string, { name: string; from: string; auth: number; transient: number }>();
+  const byShop = new Map<
+    string,
+    { name: string; from: string; auth: number; transient: number; moves: number }
+  >();
   for (const row of rows) {
     if (!row.shop_id) continue;
     const entry = byShop.get(row.shop_id) ?? {
@@ -64,14 +84,25 @@ export function alertLines(rows: FailureRow[]): CalendarAlert[] {
       from: row.shops?.twilio_number ?? '',
       auth: 0,
       transient: 0,
+      moves: 0,
     };
-    if (row.payload?.kind === 'auth') entry.auth++;
+    if (row.action === 'gcal_move_conflict') entry.moves++;
+    else if (row.payload?.kind === 'auth') entry.auth++;
     else entry.transient++;
     byShop.set(row.shop_id, entry);
   }
 
   const alerts: CalendarAlert[] = [];
   for (const [shopId, entry] of byShop) {
+    // A move conflict alerts from the first occurrence: sync refused the change, so the
+    // calendar disagrees with the register until someone fixes it by hand.
+    if (entry.moves > 0) {
+      alerts.push({
+        shopId,
+        from: entry.from,
+        body: `Marisol: ${entry.name} — ${entry.moves} calendar event move${entry.moves > 1 ? 's' : ''} collide with existing bookings and were not applied. Calendar and bookings disagree; manual fix needed.`,
+      });
+    }
     if (entry.auth > 0) {
       alerts.push({
         shopId,
@@ -100,8 +131,8 @@ export async function runCalendarAlerts(
   const since = new Date(nowMs - 3_600_000).toISOString();
   const { data, error } = await getSupabase(env)
     .from('audit_log')
-    .select('shop_id, payload, shops(name, twilio_number)')
-    .eq('action', 'gcal_failure')
+    .select('shop_id, action, payload, shops(name, twilio_number)')
+    .in('action', ['gcal_failure', 'gcal_move_conflict'])
     .gte('created_at', since);
   if (error || !data) {
     console.log('[gcal-alert] select error:', error?.message);
