@@ -4,6 +4,7 @@ import { parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import { adminAuth } from '../../middleware/admin-auth';
 import type { CalendarRouting, WorkerBindings } from '../../types';
+import { accountRoutes } from './accounts';
 
 const MUTABLE_FIELDS = new Set([
   'name',
@@ -152,6 +153,8 @@ function validateClosuresJson(raw: unknown): { value: string } | { error: string
 export const adminRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
 adminRoutes.use('*', adminAuth());
+
+adminRoutes.route('/accounts', accountRoutes);
 
 adminRoutes.get('/shops', async (c) => {
   const db = getSupabase(c.env);
