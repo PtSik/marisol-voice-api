@@ -166,6 +166,21 @@ describe('getStaffBusy', () => {
     expect(busy.perStaff).toEqual({});
   });
 
+  it('keeps a staff calendar per-person even when a legacy config also lists it as busy', async () => {
+    const shop = await connectedShop({
+      staff_calendars: { stf_ana: 'c_ana' },
+      busy_calendar_ids: ['c_ana', 'c_holidays'],
+    });
+    mockCalendars({
+      c_main: [event('main1', 9)],
+      c_ana: [event('ana1', 11)],
+      c_holidays: [event('hol1', 13)],
+    });
+    const busy = await getStaffBusy(env, shop, 'a', 'b');
+    expect(busy.shared.map((b) => b.id).sort()).toEqual(['hol1', 'main1']);
+    expect(busy.perStaff.stf_ana?.map((b) => b.id)).toEqual(['ana1']);
+  });
+
   it('reads a calendar shared by two staff members once and gives both the result', async () => {
     const shop = await connectedShop({
       staff_calendars: { stf_ana: 'c_chair', stf_luis: 'c_chair' },

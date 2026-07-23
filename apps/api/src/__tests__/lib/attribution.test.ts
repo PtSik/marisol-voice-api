@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { attributeEvent, splitByAttribution } from '../../lib/attribution';
+import { attributeEvent, splitByAttribution, summarizeEventColors } from '../../lib/attribution';
 import type { GCalBusy } from '../../lib/gcal';
 import { parseStaff } from '../../lib/staff';
 
@@ -70,6 +70,62 @@ describe('attributeEvent — title_prefix', () => {
 
   it('blocks everyone for an untitled event', () => {
     expect(attributeEvent(event(), attribution, staff)).toBeNull();
+  });
+});
+
+describe('summarizeEventColors', () => {
+  it('reports only used colours, each with its event count', () => {
+    const usage = summarizeEventColors(
+      [
+        event({ id: 'a', colorId: '5' }),
+        event({ id: 'b', colorId: '5' }),
+        event({ id: 'c', colorId: '7' }),
+      ],
+      staff,
+    );
+    expect(usage.map((u) => [u.colorId, u.count])).toEqual([
+      ['5', 2],
+      ['7', 1],
+    ]);
+  });
+
+  it('ignores events with no colour of their own', () => {
+    const usage = summarizeEventColors(
+      [event({ id: 'a' }), event({ id: 'b', colorId: '3' })],
+      staff,
+    );
+    expect(usage.map((u) => u.colorId)).toEqual(['3']);
+  });
+
+  it('hints the staff member whose name prefixes every titled entry in a colour', () => {
+    const usage = summarizeEventColors(
+      [
+        event({ id: 'a', colorId: '5', summary: 'Ana — cut' }),
+        event({ id: 'b', colorId: '5', summary: 'supplier delivery' }),
+      ],
+      staff,
+    );
+    expect(usage[0]?.hintStaffId).toBe('stf_ana');
+    expect(usage[0]?.hintTitle).toBe('Ana — cut');
+  });
+
+  it('gives no hint when one colour names two different people', () => {
+    const usage = summarizeEventColors(
+      [
+        event({ id: 'a', colorId: '5', summary: 'Ana — cut' }),
+        event({ id: 'b', colorId: '5', summary: 'Luís | trim' }),
+      ],
+      staff,
+    );
+    expect(usage[0]?.hintStaffId).toBeUndefined();
+  });
+
+  it('gives no hint when no title matches a staff name', () => {
+    const usage = summarizeEventColors(
+      [event({ id: 'a', colorId: '5', summary: 'dentist' })],
+      staff,
+    );
+    expect(usage[0]?.hintStaffId).toBeUndefined();
   });
 });
 

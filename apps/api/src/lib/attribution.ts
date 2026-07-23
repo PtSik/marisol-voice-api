@@ -11,7 +11,7 @@ function normalize(value: string): string {
 // Anchored on the start of the title on purpose: matching the name anywhere turns
 // "haircut — Ana Kowalska" (Ana is the customer) into a booking for Ana, and a wrong
 // attribution *frees* a slot, so it errs towards double-booking.
-function matchesTitlePrefix(title: string, name: string): boolean {
+export function matchesTitlePrefix(title: string, name: string): boolean {
   const t = normalize(title);
   const n = normalize(name);
   if (!n || !t.startsWith(n)) return false;
@@ -38,6 +38,48 @@ export function attributeEvent(
     return staff.find((m) => matchesTitlePrefix(summary, m.name)) ?? null;
   }
   return null;
+}
+
+export interface ColorUsage {
+  colorId: string;
+  count: number;
+  // A single staff member whose name prefixes the titles in this colour, if one clearly
+  // dominates. The picker pre-selects this mapping but never saves it on its own.
+  hintStaffId?: string;
+  hintTitle?: string;
+}
+
+// Which Google event colours a calendar actually uses and, per colour, whether its titles
+// point at one staff member — the raw material for the picker's colour hints. A colour whose
+// titles name two different people yields no hint (a wrong colour→staff mapping frees a slot).
+export function summarizeEventColors(events: GCalBusy[], staff: StaffMember[]): ColorUsage[] {
+  const byColor = new Map<string, GCalBusy[]>();
+  for (const event of events) {
+    if (!event.colorId) continue;
+    const bucket = byColor.get(event.colorId);
+    if (bucket) bucket.push(event);
+    else byColor.set(event.colorId, [event]);
+  }
+
+  const usage: ColorUsage[] = [];
+  for (const [colorId, colorEvents] of byColor) {
+    const matched = new Map<string, string>();
+    for (const event of colorEvents) {
+      if (!event.summary) continue;
+      const member = staff.find((m) => matchesTitlePrefix(event.summary as string, m.name));
+      if (member && !matched.has(member.id)) matched.set(member.id, event.summary);
+    }
+    const entry: ColorUsage = { colorId, count: colorEvents.length };
+    if (matched.size === 1) {
+      const [staffId, title] = [...matched][0] as [string, string];
+      entry.hintStaffId = staffId;
+      entry.hintTitle = title;
+    }
+    usage.push(entry);
+  }
+
+  usage.sort((a, b) => b.count - a.count || Number(a.colorId) - Number(b.colorId));
+  return usage;
 }
 
 // Foreign events that name a staff member move out of "blocks the whole shop" into that

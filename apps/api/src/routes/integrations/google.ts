@@ -1,8 +1,11 @@
 import { Hono } from 'hono';
+import { type ColorUsage, summarizeEventColors } from '../../lib/attribution';
 import { encrypt, hmacSHA256, timingSafeEqual } from '../../lib/crypto';
 import {
+  type GCalBusy,
   type GCalCalendar,
   canWriteTo,
+  gcalListBusy,
   gcalListCalendars,
   getGCalClient,
   resolveRouting,
@@ -23,20 +26,25 @@ const SCOPE = [
 // picker caps how many a shop can tick.
 const MAX_BUSY_CALENDARS = 20;
 
-// Google's fixed event palette, by colorId.
-const GOOGLE_EVENT_COLORS: Array<[string, string]> = [
-  ['1', 'Lavender'],
-  ['2', 'Sage'],
-  ['3', 'Grape'],
-  ['4', 'Flamingo'],
-  ['5', 'Banana'],
-  ['6', 'Tangerine'],
-  ['7', 'Peacock'],
-  ['8', 'Graphite'],
-  ['9', 'Blueberry'],
-  ['10', 'Basil'],
-  ['11', 'Tomato'],
+// Google's fixed event palette, by colorId: [id, name, hex].
+const GOOGLE_EVENT_COLORS: Array<[string, string, string]> = [
+  ['1', 'Lavender', '#7986cb'],
+  ['2', 'Sage', '#33b679'],
+  ['3', 'Grape', '#8e24aa'],
+  ['4', 'Flamingo', '#e67c73'],
+  ['5', 'Banana', '#f6bf26'],
+  ['6', 'Tangerine', '#f4511e'],
+  ['7', 'Peacock', '#039be5'],
+  ['8', 'Graphite', '#616161'],
+  ['9', 'Blueberry', '#3f51b5'],
+  ['10', 'Basil', '#0b8043'],
+  ['11', 'Tomato', '#d50000'],
 ];
+const COLOR_BY_ID = new Map(GOOGLE_EVENT_COLORS.map(([id, name, hex]) => [id, { name, hex }]));
+
+// A read that only feeds the picker's hint must not stall the page — well under the render.
+const COLOR_SCAN_TIMEOUT_MS = 4000;
+const COLOR_SCAN_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 
 // Signed with one of ADMIN_API_KEYS (shared with the landing worker) so only we can
 // mint connect links — a shop_id alone must not be enough to hijack a calendar binding.
@@ -52,7 +60,7 @@ async function validSig(env: WorkerBindings, shopId: string, sig: string): Promi
 
 function page(body: string, form = false): string {
   const formStyles = form
-    ? '.card{max-width:560px;text-align:left}h2{font-size:15px;margin:26px 0 10px}label{display:block;font-size:14px;margin:0 0 6px;color:#241B14}select{width:100%;padding:9px 10px;border:1px solid #E2D8CB;border-radius:8px;background:#fff;font-size:14px;margin:0 0 14px}fieldset{border:0;padding:0;margin:0}.check{display:flex;gap:8px;align-items:center;margin:0 0 8px;font-size:14px}.check input{margin:0}button{width:100%;padding:12px;border:0;border-radius:10px;background:#241B14;color:#fff;font-size:15px;cursor:pointer;margin-top:22px}.note{font-size:13px;margin:14px 0 0}.err{color:#A3341F;font-size:14px;margin:0 0 14px}'
+    ? '.card{max-width:560px;text-align:left}h2{font-size:15px;margin:26px 0 10px}label{display:block;font-size:14px;margin:0 0 6px;color:#241B14}select{width:100%;padding:9px 10px;border:1px solid #E2D8CB;border-radius:8px;background:#fff;font-size:14px;margin:0 0 14px}fieldset{border:0;padding:0;margin:0}.check{display:flex;gap:8px;align-items:center;margin:0 0 8px;font-size:14px}.check input{margin:0}.check.is-locked{opacity:.55}.check .reason{color:#6F6457;font-size:12px}button{width:100%;padding:12px;border:0;border-radius:10px;background:#241B14;color:#fff;font-size:15px;cursor:pointer;margin-top:22px}.note{font-size:13px;margin:14px 0 0}.err{color:#A3341F;font-size:14px;margin:0 0 14px}.colorrow{display:flex;gap:8px;align-items:center;margin:0 0 12px}.swatch{width:16px;height:16px;border-radius:4px;flex:none;border:1px solid rgba(0,0,0,.15)}.cinfo{flex:1;font-size:13px;color:#6F6457}.colorrow select{width:auto;margin:0;flex:none}details.more summary{font-size:13px;color:#6F6457;cursor:pointer;margin:0 0 10px}'
     : '';
   return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Marisol · Calendar</title><style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#FBF6EF;color:#241B14;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}.card{background:#fff;border-radius:16px;padding:32px 28px;max-width:440px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.06)}h1{font-size:20px;margin:0 0 10px}p{color:#6F6457;line-height:1.55;margin:0}${formStyles}</style></head><body><div class="card">${body}</div></body></html>`;
 }
@@ -198,15 +206,82 @@ function calendarOptions(
   return options.join('');
 }
 
+function truncate(value: string, max = 28): string {
+  return value.length > max ? `${value.slice(0, max - 1)}…` : value;
+}
+
+function colorRow(
+  colorId: string,
+  usage: ColorUsage | undefined,
+  staff: StaffMember[],
+  routing: CalendarRouting,
+): string {
+  const meta = COLOR_BY_ID.get(colorId) ?? { name: `Colour ${colorId}`, hex: '#ccc' };
+  // A mapping the client already saved wins over the hint — they chose it on purpose.
+  const savedStaff = routing.attribution.colors?.[colorId];
+  const selected = savedStaff ?? usage?.hintStaffId;
+  const options = staff
+    .map(
+      (m) =>
+        `<option value="${esc(m.id)}"${m.id === selected ? ' selected' : ''}>${esc(m.name)}</option>`,
+    )
+    .join('');
+  const count = usage ? ` · ${usage.count} ${usage.count === 1 ? 'entry' : 'entries'}` : '';
+  const provenance =
+    !savedStaff && usage?.hintStaffId && usage.hintTitle
+      ? ` · suggested from “${esc(truncate(usage.hintTitle))}”`
+      : '';
+  return `<div class="colorrow"><span class="swatch" style="background:${meta.hex}"></span><span class="cinfo">${esc(meta.name)}${count}${provenance}</span><select aria-label="Who uses ${esc(meta.name)}?" name="colorstaff_${esc(colorId)}"><option value=""${selected ? '' : ' selected'}>Nobody</option>${options}</select></div>`;
+}
+
+// Every colour keeps a field, always: the form is the whole payload on save, so rendering only
+// the colours we happened to observe would drop a saved mapping the moment its owner has a quiet
+// month. Observed colours lead with counts and hints; the rest wait behind a disclosure.
+export function colorMapMarkup(
+  staff: StaffMember[],
+  routing: CalendarRouting,
+  colorUsage: ColorUsage[] | undefined,
+): string {
+  const usageById = new Map((colorUsage ?? []).map((u) => [u.colorId, u]));
+  const unused = GOOGLE_EVENT_COLORS.map(([id]) => id).filter((id) => !usageById.has(id));
+  const used = [...usageById.keys()]
+    .map((id) => colorRow(id, usageById.get(id), staff, routing))
+    .join('');
+  const rest = unused.map((id) => colorRow(id, undefined, staff, routing)).join('');
+  if (!used) return rest;
+  return `${used}<details class="more"><summary>Show the colours you haven't used yet</summary>${rest}</details>`;
+}
+
+const BUSY_SYNC_SCRIPT = `<script>(function(){
+var write=document.getElementById('write_calendar');
+var staff=[].slice.call(document.querySelectorAll('select.js-staff'));
+var rows=[].slice.call(document.querySelectorAll('[data-busy-cal]'));
+function apply(){
+var occ={};
+if(write&&write.value){occ[write.value]='Booking target — always read';}
+staff.forEach(function(s){if(s.value&&!occ[s.value]){occ[s.value]='Already read for '+(s.getAttribute('data-staff-name')||'a staff member');}});
+rows.forEach(function(row){
+var box=row.querySelector('input[type=checkbox]');var reason=row.querySelector('.reason');
+var why=occ[row.getAttribute('data-busy-cal')];
+if(why){box.checked=false;box.disabled=true;row.classList.add('is-locked');if(reason){reason.textContent=why;}}
+else{box.disabled=false;row.classList.remove('is-locked');if(reason){reason.textContent='';}}
+});
+}
+if(write){write.addEventListener('change',apply);}
+staff.forEach(function(s){s.addEventListener('change',apply);});
+apply();
+})();</script>`;
+
 function selectForm(input: {
   shopId: string;
   sig: string;
   calendars: GCalCalendar[];
   staff: StaffMember[];
   routing: CalendarRouting;
+  colorUsage?: ColorUsage[] | undefined;
   error?: string;
 }): string {
-  const { shopId, sig, calendars, staff, routing } = input;
+  const { shopId, sig, calendars, staff, routing, colorUsage } = input;
   const writable = calendars.filter(canWriteTo);
   // A shop that hasn't used the picker carries the 'primary' alias, which matches no id in
   // the list — fall back to the account's primary calendar so nothing looks pre-picked wrong.
@@ -216,34 +291,37 @@ function selectForm(input: {
   const staffRows = staff
     .map(
       (m) =>
-        `<label for="staff_${esc(m.id)}">${esc(m.name)}</label><select id="staff_${esc(m.id)}" name="staff_${esc(m.id)}">${calendarOptions(
+        `<label for="staff_${esc(m.id)}">${esc(m.name)}</label><select class="js-staff" data-staff-name="${esc(m.name)}" id="staff_${esc(m.id)}" name="staff_${esc(m.id)}">${calendarOptions(
           writable,
           routing.staff_calendars[m.id],
           'Main calendar',
         )}</select>`,
     )
     .join('');
+  const staffCalendarName = new Map<string, string>();
+  for (const m of staff) {
+    const calId = routing.staff_calendars[m.id];
+    if (calId && !staffCalendarName.has(calId)) staffCalendarName.set(calId, m.name);
+  }
+  // The busy list must never let a booking target or a staff-owned calendar be ticked: doing so
+  // moves that calendar into the shared pool, where one person's appointments block the whole
+  // shop. The inline script re-runs this as the client changes staff mapping, without a save.
   const busyRows = calendars
-    .map(
-      (cal, i) =>
-        `<div class="check"><input type="checkbox" id="busy_${i}" name="busy" value="${esc(cal.id)}"${
-          routing.busy_calendar_ids.includes(cal.id) ? ' checked' : ''
-        }><label for="busy_${i}">${esc(cal.summary)}</label></div>`,
-    )
-    .join('');
-  const mode = routing.attribution.mode;
-  const colorRows = staff
-    .map((m) => {
-      const selected = Object.entries(routing.attribution.colors ?? {}).find(
-        ([, staffId]) => staffId === m.id,
-      )?.[0];
-      const options = GOOGLE_EVENT_COLORS.map(
-        ([id, name]) =>
-          `<option value="${id}"${id === selected ? ' selected' : ''}>${esc(name)}</option>`,
-      ).join('');
-      return `<label for="color_${esc(m.id)}">${esc(m.name)}</label><select id="color_${esc(m.id)}" name="color_${esc(m.id)}"><option value=""${selected ? '' : ' selected'}>No colour</option>${options}</select>`;
+    .map((cal, i) => {
+      const lockedByWrite = cal.id === writeSelected;
+      const lockedByStaff = !lockedByWrite && staffCalendarName.has(cal.id);
+      const locked = lockedByWrite || lockedByStaff;
+      const reason = lockedByWrite
+        ? 'Booking target — always read'
+        : lockedByStaff
+          ? `Already read for ${esc(staffCalendarName.get(cal.id) as string)}`
+          : '';
+      const checked = !locked && routing.busy_calendar_ids.includes(cal.id);
+      return `<div class="check${locked ? ' is-locked' : ''}" data-busy-cal="${esc(cal.id)}"><input type="checkbox" id="busy_${i}" name="busy" value="${esc(cal.id)}"${checked ? ' checked' : ''}${locked ? ' disabled' : ''}><label for="busy_${i}">${esc(cal.summary)}</label><span class="reason">${reason}</span></div>`;
     })
     .join('');
+  const mode = routing.attribution.mode;
+  const colorRows = colorMapMarkup(staff, routing, colorUsage);
 
   return `<h1>Choose your calendars</h1>
 ${input.error ? `<p class="err">${esc(input.error)}</p>` : ''}
@@ -272,14 +350,14 @@ ${colorRows}`
 }
 <p class="note">Your staff will see these appointments only if you've shared that calendar with them in Google Calendar. Bookings are always saved here for you either way.</p>
 <button type="submit">Save and finish</button>
-</form>`;
+</form>${BUSY_SYNC_SCRIPT}`;
 }
 
 async function calendarContext(
   c: { env: WorkerBindings },
   shopId: string,
 ): Promise<
-  | { shop: ShopRow; calendars: GCalCalendar[] }
+  | { shop: ShopRow; calendars: GCalCalendar[]; token: string }
   | { error: keyof typeof CONTEXT_ERROR_PAGES; status: 400 | 500 | 502 }
 > {
   const shop = await loadShop(c.env, shopId);
@@ -288,11 +366,44 @@ async function calendarContext(
   }
   try {
     const gcal = await getGCalClient(c.env, shop.integration_credentials_encrypted);
-    return { shop, calendars: await gcalListCalendars(gcal.token) };
+    return { shop, calendars: await gcalListCalendars(gcal.token), token: gcal.token };
   } catch (err) {
     console.error('[gcal-select] calendar list failed:', err instanceof Error ? err.message : err);
     return { error: 'list_failed', status: 502 };
   }
+}
+
+// Only colour-coding shops pay for this read: mode 'off'/'title_prefix' never maps colours, so
+// scanning them would be a wasted API call. Scans exactly the calendars attribution later splits
+// — the write target plus the shared busy ones — because a colour used only on a shared calendar
+// still needs its hint. A failed read costs nothing but the count next to that colour.
+async function scanEventColors(
+  token: string,
+  routing: CalendarRouting,
+  staff: StaffMember[],
+): Promise<ColorUsage[] | undefined> {
+  if (routing.attribution.mode !== 'color' || staff.length === 0) return undefined;
+  const staffCalendars = new Set(Object.values(routing.staff_calendars));
+  const calendarIds = [
+    ...new Set([
+      routing.write_calendar_id || 'primary',
+      ...routing.busy_calendar_ids.filter((id) => !staffCalendars.has(id)),
+    ]),
+  ];
+  const now = Date.now();
+  const timeMin = new Date(now - COLOR_SCAN_WINDOW_MS).toISOString();
+  const timeMax = new Date(now + COLOR_SCAN_WINDOW_MS).toISOString();
+  const signal = AbortSignal.timeout(COLOR_SCAN_TIMEOUT_MS);
+  const reads = await Promise.allSettled(
+    calendarIds.map((id) => gcalListBusy(id, token, timeMin, timeMax, signal)),
+  );
+  const events: GCalBusy[] = [];
+  for (const [i, read] of reads.entries()) {
+    if (read.status === 'fulfilled') events.push(...read.value);
+    else console.error(`[gcal-select] colour scan failed for ${calendarIds[i]}:`, read.reason);
+  }
+  const usage = summarizeEventColors(events, staff);
+  return usage.length > 0 ? usage : undefined;
 }
 
 const CONTEXT_ERROR_PAGES = {
@@ -320,17 +431,12 @@ googleIntegrationRoutes.get('/select', async (c) => {
   if ('error' in ctx) return c.html(page(CONTEXT_ERROR_PAGES[ctx.error]), ctx.status);
   if (!ctx.calendars.some(canWriteTo)) return c.html(page(CONTEXT_ERROR_PAGES.no_writable), 400);
 
+  const staff = parseStaff(ctx.shop.staff_json);
+  const routing = resolveRouting(ctx.shop);
+  const colorUsage = await scanEventColors(ctx.token, routing, staff);
+
   return c.html(
-    page(
-      selectForm({
-        shopId,
-        sig,
-        calendars: ctx.calendars,
-        staff: parseStaff(ctx.shop.staff_json),
-        routing: resolveRouting(ctx.shop),
-      }),
-      true,
-    ),
+    page(selectForm({ shopId, sig, calendars: ctx.calendars, staff, routing, colorUsage }), true),
     200,
   );
 });
@@ -356,15 +462,29 @@ googleIntegrationRoutes.post('/select', async (c) => {
   const current = resolveRouting(shop);
   const writableIds = new Set(calendars.filter(canWriteTo).map((cal) => cal.id));
   const knownIds = new Set(calendars.map((cal) => cal.id));
-
-  const rerender = (error: string) =>
-    c.html(page(selectForm({ shopId, sig, calendars, staff, routing: current, error }), true), 400);
+  // Scanned only when we actually re-render: a successful save must not pay for a hint nobody sees.
+  const rerender = async (error: string) =>
+    c.html(
+      page(
+        selectForm({
+          shopId,
+          sig,
+          calendars,
+          staff,
+          routing: current,
+          colorUsage: await scanEventColors(ctx.token, current, staff),
+          error,
+        }),
+        true,
+      ),
+      400,
+    );
 
   const writeCalendarId = typeof body.write_calendar === 'string' ? body.write_calendar : '';
   // A read-only calendar as the write target would fail silently: the booking and its SMS
   // still succeed (the event write runs in waitUntil) and the calendar stays empty.
   if (!writableIds.has(writeCalendarId)) {
-    return rerender('Please pick a main calendar you can edit.');
+    return await rerender('Please pick a main calendar you can edit.');
   }
 
   const staffCalendars: Record<string, string> = {};
@@ -373,7 +493,7 @@ googleIntegrationRoutes.post('/select', async (c) => {
     const id = typeof picked === 'string' ? picked : '';
     if (!id) continue;
     if (!writableIds.has(id))
-      return rerender(`Please pick a calendar you can edit for ${member.name}.`);
+      return await rerender(`Please pick a calendar you can edit for ${member.name}.`);
     staffCalendars[member.id] = id;
   }
 
@@ -387,7 +507,9 @@ googleIntegrationRoutes.post('/select', async (c) => {
     ),
   ];
   if (busyCalendarIds.length > MAX_BUSY_CALENDARS) {
-    return rerender(`Please pick at most ${MAX_BUSY_CALENDARS} calendars to check for busy times.`);
+    return await rerender(
+      `Please pick at most ${MAX_BUSY_CALENDARS} calendars to check for busy times.`,
+    );
   }
 
   // A wrong attribution frees a slot rather than holding it, so anything we don't understand
@@ -397,9 +519,10 @@ googleIntegrationRoutes.post('/select', async (c) => {
     rawMode === 'color' || rawMode === 'title_prefix' ? rawMode : 'off';
   const colors: Record<string, string> = {};
   if (mode === 'color') {
-    for (const member of staff) {
-      const picked = body[`color_${member.id}`];
-      if (typeof picked === 'string' && picked) colors[picked] = member.id;
+    const staffIds = new Set(staff.map((m) => m.id));
+    for (const [colorId] of GOOGLE_EVENT_COLORS) {
+      const picked = body[`colorstaff_${colorId}`];
+      if (typeof picked === 'string' && staffIds.has(picked)) colors[colorId] = picked;
     }
   }
 

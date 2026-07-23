@@ -335,6 +335,9 @@ export async function gcalListBusy(
   );
   url.search = new URLSearchParams({
     singleEvents: 'true',
+    // Without an order Google may truncate the 250-event page arbitrarily; by start time the
+    // cut is at least predictable and callers lose the far end of the window, not a random slice.
+    orderBy: 'startTime',
     timeMin: timeMinIso,
     timeMax: timeMaxIso,
     maxResults: '250',
@@ -498,7 +501,14 @@ export async function getStaffBusy(
     if (calendarId === routing.write_calendar_id) continue;
     staffByCalendar.set(calendarId, [...(staffByCalendar.get(calendarId) ?? []), staffId]);
   }
-  const sharedIds = new Set([routing.write_calendar_id, ...routing.busy_calendar_ids]);
+  // A staff calendar that also sits in busy_calendar_ids (a legacy mis-config the picker used
+  // to allow) stays per-person: reading it as shared would block the whole shop on one
+  // person's appointments, the exact failure the picker now prevents.
+  const staffCalendarIds = new Set(staffByCalendar.keys());
+  const sharedIds = new Set([
+    routing.write_calendar_id,
+    ...routing.busy_calendar_ids.filter((id) => !staffCalendarIds.has(id)),
+  ]);
   for (const id of sharedIds) staffByCalendar.delete(id);
 
   const targets = [
