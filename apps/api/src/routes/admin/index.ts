@@ -5,6 +5,7 @@ import { getSupabase } from '../../lib/supabase';
 import { adminAuth } from '../../middleware/admin-auth';
 import type { CalendarRouting, WorkerBindings } from '../../types';
 import { accountRoutes } from './accounts';
+import { referralRoutes } from './referrals';
 
 const MUTABLE_FIELDS = new Set([
   'name',
@@ -155,6 +156,7 @@ export const adminRoutes = new Hono<{ Bindings: WorkerBindings }>();
 adminRoutes.use('*', adminAuth());
 
 adminRoutes.route('/accounts', accountRoutes);
+adminRoutes.route('/referrals', referralRoutes);
 
 adminRoutes.get('/shops', async (c) => {
   const db = getSupabase(c.env);
