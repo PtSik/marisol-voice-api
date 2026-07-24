@@ -2,7 +2,14 @@ import { Hono } from 'hono';
 import { getSupabase } from '../../lib/supabase';
 import type { WorkerBindings } from '../../types';
 
-const MUTABLE_FIELDS = new Set(['email', 'google_sub', 'shop_id', 'last_login_at', 'role']);
+const MUTABLE_FIELDS = new Set([
+  'email',
+  'google_sub',
+  'shop_id',
+  'lead_id',
+  'last_login_at',
+  'role',
+]);
 
 // Crockford base32 without I/L/O/U: referral codes get read aloud and typed by hand.
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';

@@ -94,6 +94,11 @@ describe('buildAccountUpdate', () => {
     expect(built).toEqual({ update: { google_sub: 'x' } });
   });
 
+  it('lets lead_id through', () => {
+    const built = buildAccountUpdate({ lead_id: 'lead-9' });
+    expect(built).toEqual({ update: { lead_id: 'lead-9' } });
+  });
+
   it('lowercases and trims the email', () => {
     const built = buildAccountUpdate({ email: '  Owner@Shop.COM ' });
     expect(built).toEqual({ update: { email: 'owner@shop.com' } });
