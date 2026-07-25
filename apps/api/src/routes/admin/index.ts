@@ -22,6 +22,7 @@ const MUTABLE_FIELDS = new Set([
   'integration',
   'calendar_routing',
   'elevenlabs_agent_id',
+  'account_id',
   'status',
 ]);
 

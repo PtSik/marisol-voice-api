@@ -136,4 +136,9 @@ describe('buildShopUpdate', () => {
     if ('error' in built) return;
     expect(built.update).toEqual({ calendar_routing: null });
   });
+
+  it('lets account_id through so a shop can be attached to an account', () => {
+    const built = buildShopUpdate({ account_id: 'acc-1' });
+    expect(built).toEqual({ update: { account_id: 'acc-1' } });
+  });
 });

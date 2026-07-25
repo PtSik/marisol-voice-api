@@ -69,6 +69,16 @@ describe('/admin/accounts', () => {
     expect(res.status).toBe(500);
   });
 
+  it("requires admin auth to list an account's shops", async () => {
+    const res = await call('/admin/accounts/acc-1/shops', {}, false);
+    expect(res.status).toBe(401);
+  });
+
+  it('lets a shops lookup through to the DB', async () => {
+    const res = await call('/admin/accounts/acc-1/shops');
+    expect(res.status).toBe(500);
+  });
+
   it('rejects a patch with no updatable fields', async () => {
     const res = await call('/admin/accounts/abc', {
       method: 'PATCH',

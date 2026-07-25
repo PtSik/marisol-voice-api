@@ -54,6 +54,17 @@ accountRoutes.get('/', async (c) => {
   return c.json({ account: data });
 });
 
+accountRoutes.get('/:id/shops', async (c) => {
+  const db = getSupabase(c.env);
+  const { data, error } = await db
+    .from('shops')
+    .select('*')
+    .eq('account_id', c.req.param('id'))
+    .order('created_at', { ascending: true });
+  if (error) return c.json({ error: error.message }, 500);
+  return c.json({ shops: data });
+});
+
 accountRoutes.post('/', async (c) => {
   let body: Record<string, unknown>;
   try {
