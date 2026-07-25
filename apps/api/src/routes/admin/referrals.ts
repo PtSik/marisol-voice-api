@@ -5,8 +5,7 @@ import type { WorkerBindings } from '../../types';
 const STATUSES = new Set([
   'pending',
   'qualified',
-  'crediting',
-  'credited',
+  'claimable',
   'payout_requested',
   'paid_out',
   'void',
@@ -23,7 +22,7 @@ const MUTABLE_FIELDS = new Set([
 ]);
 
 const WITH_REFERRER =
-  '*,referrer:accounts!referrals_referrer_account_id_fkey(id,email,lead_id,referral_code)';
+  '*,referrer:accounts!referrals_referrer_account_id_fkey(id,email,lead_id,referral_code,payout_method,payout_handle)';
 
 function normaliseEmail(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().toLowerCase() : '';

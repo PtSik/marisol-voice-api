@@ -253,4 +253,21 @@ describe('buildAccountUpdate', () => {
     const built = buildAccountUpdate({ email: '  ' });
     expect(built).toEqual({ error: 'email must be a non-empty string' });
   });
+
+  it('lets a payout method and handle through, trimmed', () => {
+    const built = buildAccountUpdate({ payout_method: 'venmo', payout_handle: ' @owner ' });
+    expect(built).toEqual({ update: { payout_method: 'venmo', payout_handle: '@owner' } });
+  });
+
+  it('rejects an unknown payout method', () => {
+    expect(buildAccountUpdate({ payout_method: 'bank' })).toEqual({
+      error: 'invalid payout_method',
+    });
+  });
+
+  it('rejects a blank payout handle', () => {
+    expect(buildAccountUpdate({ payout_method: 'zelle', payout_handle: '   ' })).toEqual({
+      error: 'payout_handle must be a non-empty string',
+    });
+  });
 });

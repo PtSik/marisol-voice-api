@@ -87,7 +87,7 @@ describe('/admin/referrals', () => {
   it('rejects a patch with an unknown expected_status', async () => {
     const res = await call('/admin/referrals/abc', {
       method: 'PATCH',
-      body: JSON.stringify({ status: 'credited', expected_status: 'nonsense' }),
+      body: JSON.stringify({ status: 'claimable', expected_status: 'nonsense' }),
     });
     expect(res.status).toBe(400);
   });
@@ -95,9 +95,19 @@ describe('/admin/referrals', () => {
   it('lets a valid compare-and-set patch through to the DB', async () => {
     const res = await call('/admin/referrals/abc', {
       method: 'PATCH',
-      body: JSON.stringify({ status: 'crediting', expected_status: 'qualified' }),
+      body: JSON.stringify({ status: 'claimable', expected_status: 'qualified' }),
     });
     expect(res.status).toBe(500);
+  });
+
+  it('rejects the retired credit statuses', async () => {
+    for (const status of ['crediting', 'credited']) {
+      const res = await call('/admin/referrals/abc', {
+        method: 'PATCH',
+        body: JSON.stringify({ status }),
+      });
+      expect(res.status).toBe(400);
+    }
   });
 });
 
@@ -112,8 +122,8 @@ describe('buildReferralUpdate', () => {
   });
 
   it('keeps expected_status out of the update', () => {
-    const built = buildReferralUpdate({ status: 'credited', expected_status: 'crediting' });
-    expect(built).toEqual({ update: { status: 'credited' } });
+    const built = buildReferralUpdate({ status: 'payout_requested', expected_status: 'claimable' });
+    expect(built).toEqual({ update: { status: 'payout_requested' } });
   });
 
   it('rejects an unknown status', () => {

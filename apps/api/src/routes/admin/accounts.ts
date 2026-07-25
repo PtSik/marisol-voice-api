@@ -11,7 +11,11 @@ const MUTABLE_FIELDS = new Set([
   'last_login_at',
   'role',
   'email_verified',
+  'payout_method',
+  'payout_handle',
 ]);
+
+const PAYOUT_METHODS = new Set(['paypal', 'venmo', 'zelle']);
 
 // Crockford base32 without I/L/O/U: referral codes get read aloud and typed by hand.
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
@@ -35,6 +39,15 @@ export function buildAccountUpdate(
       const email = normaliseEmail(value);
       if (!email) return { error: 'email must be a non-empty string' };
       update.email = email;
+    } else if (key === 'payout_method') {
+      if (typeof value !== 'string' || !PAYOUT_METHODS.has(value)) {
+        return { error: 'invalid payout_method' };
+      }
+      update.payout_method = value;
+    } else if (key === 'payout_handle') {
+      const handle = typeof value === 'string' ? value.trim() : '';
+      if (!handle) return { error: 'payout_handle must be a non-empty string' };
+      update.payout_handle = handle;
     } else {
       update[key] = value;
     }
