@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { hashPassword, verifyPassword } from '../../lib/password';
 import { getSupabase } from '../../lib/supabase';
 import type { WorkerBindings } from '../../types';
 
@@ -9,6 +10,7 @@ const MUTABLE_FIELDS = new Set([
   'lead_id',
   'last_login_at',
   'role',
+  'email_verified',
 ]);
 
 // Crockford base32 without I/L/O/U: referral codes get read aloud and typed by hand.
@@ -76,16 +78,27 @@ accountRoutes.post('/', async (c) => {
   const email = normaliseEmail(body.email);
   if (!email) return c.json({ error: 'Missing required field: email' }, 400);
 
+  const passwordHash =
+    typeof body.password === 'string' && body.password
+      ? await hashPassword(body.password)
+      : undefined;
+
   const db = getSupabase(c.env);
   const existing = await db.from('accounts').select('*').eq('email', email).maybeSingle();
   if (existing.error) return c.json({ error: existing.error.message }, 500);
-  if (existing.data) return c.json({ account: existing.data });
+  // Get-or-create is what provisioning wants, but a sign-up carries a password: handing that caller
+  // the existing row would let it mint a session on an account whose password it never proved.
+  if (existing.data) {
+    if (passwordHash) return c.json({ error: 'Account already exists' }, 409);
+    return c.json({ account: existing.data });
+  }
 
   const insert = {
     email,
     referral_code: referralCode(),
     ...(body.shop_id ? { shop_id: body.shop_id } : {}),
     ...(body.lead_id ? { lead_id: body.lead_id } : {}),
+    ...(passwordHash ? { password_hash: passwordHash } : {}),
   };
   const { data, error } = await db.from('accounts').insert(insert).select().single();
   if (error) {
@@ -93,11 +106,37 @@ accountRoutes.post('/', async (c) => {
     // random code collided. Re-reading by email settles the first and is harmless for the second.
     if (error.code === '23505') {
       const retry = await db.from('accounts').select('*').eq('email', email).maybeSingle();
-      if (retry.data) return c.json({ account: retry.data });
+      if (retry.data) {
+        if (passwordHash) return c.json({ error: 'Account already exists' }, 409);
+        return c.json({ account: retry.data });
+      }
     }
     return c.json({ error: error.message }, 400);
   }
   return c.json({ account: data }, 201);
+});
+
+accountRoutes.post('/verify-password', async (c) => {
+  let body: Record<string, unknown>;
+  try {
+    body = await c.req.json();
+  } catch {
+    return c.json({ error: 'Invalid JSON' }, 400);
+  }
+
+  const email = normaliseEmail(body.email);
+  const password = typeof body.password === 'string' ? body.password : '';
+  if (!email || !password) return c.json({ error: 'email and password are required' }, 400);
+
+  const db = getSupabase(c.env);
+  const { data, error } = await db.from('accounts').select('*').eq('email', email).maybeSingle();
+  if (error) return c.json({ error: error.message }, 500);
+  if (!data || !data.password_hash) return c.json({ ok: false }, 401);
+
+  const valid = await verifyPassword(password, data.password_hash);
+  if (!valid) return c.json({ ok: false }, 401);
+
+  return c.json({ ok: true, account: data });
 });
 
 accountRoutes.patch('/:id', async (c) => {
@@ -108,13 +147,25 @@ accountRoutes.patch('/:id', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  const built = buildAccountUpdate(body);
-  if ('error' in built) return c.json({ error: built.error }, 400);
+  const { password, ...rest } = body;
+  const built = buildAccountUpdate(rest);
+  const update: Record<string, unknown> = 'update' in built ? { ...built.update } : {};
+
+  if (password !== undefined) {
+    if (typeof password !== 'string' || !password) {
+      return c.json({ error: 'password must be a non-empty string' }, 400);
+    }
+    update.password_hash = await hashPassword(password);
+  }
+
+  if (Object.keys(update).length === 0) {
+    return c.json({ error: 'error' in built ? built.error : 'No updatable fields provided' }, 400);
+  }
 
   const db = getSupabase(c.env);
   const { data, error } = await db
     .from('accounts')
-    .update(built.update)
+    .update(update)
     .eq('id', c.req.param('id'))
     .select()
     .single();
