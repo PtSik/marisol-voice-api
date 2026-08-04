@@ -22,9 +22,15 @@ const MUTABLE_FIELDS = new Set([
   'integration',
   'calendar_routing',
   'elevenlabs_agent_id',
+  'primary_language',
   'account_id',
   'status',
 ]);
+
+// Undefined is valid — the column defaults to 'en', so provisioning may simply omit it.
+function isValidPrimaryLanguage(v: unknown): boolean {
+  return v === undefined || v === 'en' || v === 'es';
+}
 
 function isValidHoursValue(v: unknown): boolean {
   if (typeof v !== 'string') return false;
@@ -203,6 +209,10 @@ adminRoutes.post('/shops', async (c) => {
     body.staff_json = r.value;
   }
 
+  if (!isValidPrimaryLanguage(body.primary_language)) {
+    return c.json({ error: "primary_language must be 'en' or 'es'" }, 400);
+  }
+
   const db = getSupabase(c.env);
   const { data, error } = await db.from('shops').insert(body).select().single();
   if (error) return c.json({ error: error.message }, 400);
@@ -231,6 +241,9 @@ export function buildShopUpdate(
       const r = validateCalendarRouting(value);
       if ('error' in r) return r;
       update[key] = r.value;
+    } else if (key === 'primary_language') {
+      if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };
+      update[key] = value;
     } else {
       update[key] = value;
     }

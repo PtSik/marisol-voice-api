@@ -10,3 +10,7 @@ dist/
 docs/research/
 
 CLAUDE.md
+
+# The landing app is its own repo, checked out inside this tree — never commit it here.
+kaijiro-voice-landing/
+.DS_Store

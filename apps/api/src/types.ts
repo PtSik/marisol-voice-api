@@ -218,6 +218,7 @@ export interface ShopRow {
   integration_credentials_encrypted: string | null;
   calendar_routing: CalendarRouting | null;
   elevenlabs_agent_id: string | null;
+  primary_language: 'en' | 'es';
   reminders_enabled: boolean;
   status: string;
   trial_ends_at: string | null;

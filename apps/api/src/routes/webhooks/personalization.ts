@@ -39,6 +39,16 @@ export function buildPersonalizationData(
     }),
   };
 
+  // Only the opening language is overridden. The agent's own `language_presets` supply the
+  // matching first_message, and language_detection still lets the caller switch mid-call —
+  // so a Spanish-first shop stays fully bilingual, it just stops opening in English.
+  if (shop.primary_language === 'es') {
+    return {
+      dynamic_variables: dynamicVars,
+      conversation_config_override: { language: 'es' },
+    };
+  }
+
   return { dynamic_variables: dynamicVars };
 }
 
