@@ -458,8 +458,16 @@ const EMPTY_BUSY: StaffBusy = { shared: [], perStaff: {} };
 
 // One deadline covers the whole read, refresh-token exchange included — an AbortSignal that
 // only wraps events.list leaves the token fetch hanging outside the budget on a cold cache.
-function remainingSignal(deadlineAt: number): AbortSignal {
-  return AbortSignal.timeout(Math.max(1, deadlineAt - Date.now()));
+// A controller with an explicit timer rather than AbortSignal.timeout(): the latter's timer
+// does not hold the event loop open under Bun, so a hung fetch with nothing else pending is
+// never aborted at all. Callers must clear() so a fast read leaves no timer behind.
+function deadline(timeoutMs: number): { signal: AbortSignal; clear: () => void } {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error(`GCal read exceeded ${timeoutMs}ms`)),
+    Math.max(1, timeoutMs),
+  );
+  return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
 // Foreign-event busy for a shop's calendars, one events.list per calendar in parallel.
@@ -474,19 +482,40 @@ export async function getStaffBusy(
   timeMaxIso: string,
   options: BusyReadOptions = {},
 ): Promise<StaffBusy> {
-  if (shop.integration !== 'google_calendar' || !shop.integration_credentials_encrypted) {
+  const encryptedCreds = shop.integration_credentials_encrypted;
+  if (shop.integration !== 'google_calendar' || !encryptedCreds) {
     return EMPTY_BUSY;
   }
-  const deadlineAt = Date.now() + (options.timeoutMs ?? 1500);
+  const budget = deadline(options.timeoutMs ?? 1500);
+  try {
+    return await readStaffBusy(
+      env,
+      shop,
+      encryptedCreds,
+      timeMinIso,
+      timeMaxIso,
+      options,
+      budget.signal,
+    );
+  } finally {
+    budget.clear();
+  }
+}
+
+async function readStaffBusy(
+  env: WorkerBindings,
+  shop: ShopRow,
+  encryptedCreds: string,
+  timeMinIso: string,
+  timeMaxIso: string,
+  options: BusyReadOptions,
+  signal: AbortSignal,
+): Promise<StaffBusy> {
   const routing = resolveRouting(shop);
 
   let token: string;
   try {
-    const gcal = await getGCalClient(
-      env,
-      shop.integration_credentials_encrypted,
-      remainingSignal(deadlineAt),
-    );
+    const gcal = await getGCalClient(env, encryptedCreds, signal);
     token = gcal.token;
   } catch (err) {
     console.error('[gcal-busy] token fail-open:', err instanceof Error ? err.message : err);
@@ -517,9 +546,7 @@ export async function getStaffBusy(
   ];
 
   const results = await Promise.allSettled(
-    targets.map((t) =>
-      gcalListBusy(t.calendarId, token, timeMinIso, timeMaxIso, remainingSignal(deadlineAt)),
-    ),
+    targets.map((t) => gcalListBusy(t.calendarId, token, timeMinIso, timeMaxIso, signal)),
   );
 
   const busy: StaffBusy = { shared: [], perStaff: {} };

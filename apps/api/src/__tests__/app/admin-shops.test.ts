@@ -141,4 +141,18 @@ describe('buildShopUpdate', () => {
     const built = buildShopUpdate({ account_id: 'acc-1' });
     expect(built).toEqual({ update: { account_id: 'acc-1' } });
   });
+
+  // is_demo decides whether a shop may hand a caller to a human. Set on a paying client by accident,
+  // their callers stop reaching them and nothing in the logs says why — so it takes a real boolean.
+  it('lets is_demo through as a boolean', () => {
+    expect(buildShopUpdate({ is_demo: true })).toEqual({ update: { is_demo: true } });
+    expect(buildShopUpdate({ is_demo: false })).toEqual({ update: { is_demo: false } });
+  });
+
+  it('rejects a non-boolean is_demo rather than coercing it', () => {
+    for (const value of ['true', 'false', 1, 0, null]) {
+      const built = buildShopUpdate({ is_demo: value });
+      expect('error' in built).toBe(true);
+    }
+  });
 });

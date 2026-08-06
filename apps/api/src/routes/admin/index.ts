@@ -25,6 +25,7 @@ const MUTABLE_FIELDS = new Set([
   'calendar_routing',
   'elevenlabs_agent_id',
   'primary_language',
+  'is_demo',
   'account_id',
   'status',
 ]);
@@ -32,6 +33,14 @@ const MUTABLE_FIELDS = new Set([
 // Undefined is valid — the column defaults to 'en', so provisioning may simply omit it.
 function isValidPrimaryLanguage(v: unknown): boolean {
   return v === undefined || v === 'en' || v === 'es';
+}
+
+// Undefined is valid — the column defaults to false, and every caller except the demo seeder omits
+// it. Anything else must be a real boolean: this flag decides whether a shop can hand a caller to a
+// human, and set wrongly on a paying client their callers stop reaching them with nothing in the
+// logs to say so. A typo'd value earns a clear 400 here rather than a Postgres cast error.
+function isValidIsDemo(v: unknown): boolean {
+  return v === undefined || typeof v === 'boolean';
 }
 
 function isValidHoursValue(v: unknown): boolean {
@@ -215,6 +224,10 @@ adminRoutes.post('/shops', async (c) => {
     return c.json({ error: "primary_language must be 'en' or 'es'" }, 400);
   }
 
+  if (!isValidIsDemo(body.is_demo)) {
+    return c.json({ error: 'is_demo must be a boolean' }, 400);
+  }
+
   const db = getSupabase(c.env);
   const { data, error } = await db.from('shops').insert(body).select().single();
   if (error) return c.json({ error: error.message }, 400);
@@ -245,6 +258,9 @@ export function buildShopUpdate(
       update[key] = r.value;
     } else if (key === 'primary_language') {
       if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };
+      update[key] = value;
+    } else if (key === 'is_demo') {
+      if (!isValidIsDemo(value)) return { error: 'is_demo must be a boolean' };
       update[key] = value;
     } else {
       update[key] = value;

@@ -1,0 +1,47 @@
+-- Marks the shops that exist only to be demonstrated: the two landing-page widget shops and the
+-- five rows behind the sales demo-number pool.
+--
+-- The agent side of "a demo never escalates" is a prompt overlay plus a removed tool, and both of
+-- those live in the ElevenLabs dashboard — unversioned state that anyone can undo with a click, with
+-- no PR and no test. This column is the half that can be reviewed and tested.
+--
+-- What it prevents: `handleEscalate` does real work. `transfer` hands back the shop's
+-- `escalation_phone` and announces the hand-off out loud; `callback` inserts a `callbacks` row and
+-- texts `owner_escalation_phone`. On a leased demo number, renamed to answer as the prospect's own
+-- salon, that means a business owner testing the agent is told they are being put through to their
+-- own shop and is instead routed to us — or we get an SMS asking us to call them back.
+--
+-- Boolean NOT NULL DEFAULT false: metadata-only, no table rewrite, and every existing row reads as a
+-- real shop. Demo rows are flipped on explicitly by the seed script, so a new shop is never a demo by
+-- accident — the failure mode of a wrong default here is a paying client whose agent silently stops
+-- transferring callers to them.
+
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS is_demo BOOLEAN NOT NULL DEFAULT false;
+
+-- This migration on its own changes nothing: every row reads false, which is the safe default but
+-- also means no demo is protected yet. The existing demo rows have to be flagged by hand, once.
+--
+-- Two widget shops (pinned in the landing repo's `lib/demoAgents.ts`) and five sales-pool rows (read
+-- from that repo's D1 on 2026-08-06: `SELECT DISTINCT shop_id FROM demo_numbers`). The pool ids are
+-- recorded here so this migration is self-contained, but they are the state of one database on one
+-- day — re-run that query before trusting them.
+--
+--   UPDATE shops SET is_demo = true WHERE id IN (
+--     '4d5815c1-c77a-43cc-8df4-1b0b7be6c896',  -- widget: Barbarossa Barbershop
+--     'da61e1fa-787a-4069-b3a6-246bd95144da',  -- widget: Pampered Paws Pet Grooming
+--     '57c355bf-101f-4d66-a88e-66e2c3e8178b',  -- pool +1 786 627 5789
+--     '8e8cbda8-8a00-440b-a3ef-d62afb473cc2',  -- pool +1 786 673 8213
+--     '632c512c-f18a-44ff-94a5-fb98aa107e4d',  -- pool +1 786 808 2403
+--     'a26ec42d-1e17-439c-b0ef-c180cbdff817',  -- pool +1 786 882 7405
+--     '73092aef-a666-4eaa-bace-95b2448f1baa'   -- pool +1 786 891 3694
+--   );
+--
+-- Look before running it, because those seven are the demos we know about, not necessarily every row
+-- in the table:
+--
+--   SELECT id, name, twilio_number, status, is_demo FROM shops ORDER BY created_at;
+--
+-- As of 2026-08-06 there are no paying clients, so anything else in there is a test row that also
+-- wants flagging — `UPDATE shops SET is_demo = true` unqualified is the honest call while that holds.
+-- Once a real client exists this stops being true, and the list above becomes the safe form: a client
+-- flagged as a demo silently stops escalating to their owner, with nothing in the logs to say why.

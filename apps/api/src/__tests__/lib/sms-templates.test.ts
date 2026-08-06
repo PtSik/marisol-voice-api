@@ -69,8 +69,11 @@ describe('spanish templates', () => {
 
 describe('smsWhenLabel', () => {
   const utcMs = Date.UTC(2026, 6, 9, 18, 30); // 2:30 PM in New York (EDT)
+  // The date/time separator is CLDR data, not our decision — older ICU builds write a comma,
+  // newer ones write " at ". Everything either side of it is what the customer reads, so pin
+  // that exactly and let the separator follow whichever runtime formats the message.
   it('formats in en-US', () => {
-    expect(smsWhenLabel(utcMs, 'America/New_York', 'en')).toBe('Jul 9, 2026, 2:30 PM');
+    expect(smsWhenLabel(utcMs, 'America/New_York', 'en')).toMatch(/^Jul 9, 2026(,| at) 2:30 PM$/);
   });
   it('formats in es-US with the same local time', () => {
     const label = smsWhenLabel(utcMs, 'America/New_York', 'es');
@@ -80,6 +83,6 @@ describe('smsWhenLabel', () => {
   });
   it('respects DST transitions', () => {
     const winter = Date.UTC(2026, 0, 9, 19, 30); // EST (UTC-5)
-    expect(smsWhenLabel(winter, 'America/New_York', 'en')).toBe('Jan 9, 2026, 2:30 PM');
+    expect(smsWhenLabel(winter, 'America/New_York', 'en')).toMatch(/^Jan 9, 2026(,| at) 2:30 PM$/);
   });
 });

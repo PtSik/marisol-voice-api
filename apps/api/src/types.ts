@@ -225,6 +225,9 @@ export interface ShopRow {
   calendar_routing: CalendarRouting | null;
   elevenlabs_agent_id: string | null;
   primary_language: 'en' | 'es';
+  // Widget and sales-pool shops only. Suppresses anything that reaches a real person — see
+  // `handleEscalate`. Optional so a row selected before migration 0014 still types.
+  is_demo?: boolean;
   reminders_enabled: boolean;
   status: string;
   trial_ends_at: string | null;
