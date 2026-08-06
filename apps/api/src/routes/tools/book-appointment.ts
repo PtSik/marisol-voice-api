@@ -58,21 +58,9 @@ export async function handleBookAppointment(
   } = params;
   const language = normalizeSmsLanguage(params.language);
 
-  if (!hasPhoneContext(raw)) {
-    return c.json<ElevenLabsToolWebhookResponse>({
-      result: "You're all set — in the real product I'd text your confirmation now.",
-      success: true,
-    });
-  }
-
-  const normalizedPhone = tryToE164(customer_phone);
-  if (!normalizedPhone) {
-    return c.json<ElevenLabsToolWebhookResponse>({
-      result: 'Invalid customer phone number.',
-      success: false,
-    });
-  }
-
+  // Staff and opening-hours checks run before the web-demo short circuit below: both are pure
+  // functions over the shop row we already hold, so the demo gets the same "no, we're closed
+  // then" answer a real caller would instead of confirming a slot production would reject.
   const resolved = resolveStaffForBooking(shop.staff_json, staff_name);
   if ('unknown' in resolved) {
     return c.json<ElevenLabsToolWebhookResponse>({
@@ -86,6 +74,23 @@ export async function handleBookAppointment(
   if (!validation.ok) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: bookingTimeError(validation.reason, staff_name),
+      success: false,
+    });
+  }
+
+  // Web demo: no caller ID, so there is no phone to key a customer on or text. Everything past
+  // here writes to the database and sends SMS, which a demo must not do.
+  if (!hasPhoneContext(raw)) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: "You're all set — in the real product I'd text your confirmation now.",
+      success: true,
+    });
+  }
+
+  const normalizedPhone = tryToE164(customer_phone);
+  if (!normalizedPhone) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: 'Invalid customer phone number.',
       success: false,
     });
   }

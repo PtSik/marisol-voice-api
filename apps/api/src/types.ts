@@ -11,6 +11,10 @@ export interface ConversationDynamicVariables {
   hours_summary: string;
   services_summary: string;
   staff_summary: string;
+  // Both may be empty — shops onboarded before these existed have neither, and the prompt treats an
+  // empty value as "not known" and escalates, exactly as it did before.
+  shop_address: string;
+  shop_notes: string;
   escalation_phone: string;
   ai_disclosure_text: string;
   caller_phone: string;
@@ -216,6 +220,8 @@ export interface ShopRow {
   staff_json: string;
   integration: string;
   integration_credentials_encrypted: string | null;
+  address: string | null;
+  notes: string | null;
   calendar_routing: CalendarRouting | null;
   elevenlabs_agent_id: string | null;
   primary_language: 'en' | 'es';

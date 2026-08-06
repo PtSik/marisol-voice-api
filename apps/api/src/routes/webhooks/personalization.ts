@@ -21,6 +21,10 @@ export function buildPersonalizationData(
     hours_summary: formatSchedule(shop, now),
     services_summary: formatJson(shop.services_json),
     staff_summary: staffSummary(parseStaff(shop.staff_json)),
+    // Empty string rather than null: the prompt renders these inline, and "null" spoken aloud is
+    // worse than a blank the agent can recognise as "I wasn't given this".
+    shop_address: shop.address?.trim() ?? '',
+    shop_notes: shop.notes?.trim() ?? '',
     escalation_phone: shop.escalation_phone,
     ai_disclosure_text: shop.ai_disclosure_text,
     caller_phone: callerPhone,

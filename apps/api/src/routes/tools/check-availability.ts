@@ -100,6 +100,19 @@ export function buildSlots(input: {
   return slots;
 }
 
+// The prompt tells the agent to offer two or three times, never the whole day — but a list of six
+// in the tool result is a list of six it will read aloud, and it did. Pick the times for it and put
+// them in `result`, which is the field it speaks from. Earliest / middle / latest rather than the
+// first three, so the caller can pick morning or afternoon without a second availability check;
+// the full list stays in `available_slots` for "do you have anything at two?".
+export function pickOffer(slots: AvailableSlot[]): AvailableSlot[] {
+  if (slots.length <= 3) return slots;
+  const last = slots.length - 1;
+  return [0, Math.floor(last / 2), last]
+    .map((i) => slots[i])
+    .filter((s): s is AvailableSlot => !!s);
+}
+
 export async function handleCheckAvailability(
   c: Context<{ Bindings: WorkerBindings }>,
   shop: ShopRow,
@@ -178,13 +191,14 @@ export async function handleCheckAvailability(
     perStaffBusy: foreign.perStaff,
   });
 
-  const soonest = slots[0]?.label;
+  const offer = pickOffer(slots);
+  const spoken = offer.map((s) => `${s.label} with ${s.staff_name}`).join(', ');
   return c.json<ElevenLabsToolWebhookResponse>({
     result:
       slots.length > 0
-        ? `Found ${slots.length} available slots on ${date}, soonest at ${soonest}.`
+        ? `Found ${slots.length} available slots on ${date}. Offer only these: ${spoken}. Do not read the others unless the caller asks about a specific time.`
         : `No available slots on ${date}.`,
     success: true,
-    data: { available_slots: slots, total_available: slots.length, date },
+    data: { available_slots: slots, offer, total_available: slots.length, date },
   });
 }

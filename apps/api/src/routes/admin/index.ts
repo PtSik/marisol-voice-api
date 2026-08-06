@@ -19,6 +19,8 @@ const MUTABLE_FIELDS = new Set([
   'closures_json',
   'services_json',
   'staff_json',
+  'address',
+  'notes',
   'integration',
   'calendar_routing',
   'elevenlabs_agent_id',

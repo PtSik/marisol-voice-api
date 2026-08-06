@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { buildSlots } from '../../routes/tools/check-availability';
+import { buildSlots, pickOffer } from '../../routes/tools/check-availability';
 import type { ShopRow } from '../../types';
 
 // Ana works the shop's full hours; Luis only Tuesdays 10am–2pm.
@@ -144,5 +144,22 @@ describe('check_availability — per-staff busy calendars', () => {
       perStaffBusy: {},
     });
     expect(out.map((s) => s.label)).not.toContain('10:00 AM');
+  });
+});
+
+describe('pickOffer', () => {
+  const day = slots(MONDAY, 'Ana');
+
+  it('spreads the picks across the day instead of taking the earliest three', () => {
+    expect(day.length).toBeGreaterThan(3);
+    const picked = pickOffer(day).map((s) => s.label);
+    expect(picked).toEqual([day[0]?.label, day[3]?.label, day[7]?.label]);
+    // The point of the spread: an afternoon caller gets an afternoon option without a second check.
+    expect(picked).not.toEqual(day.slice(0, 3).map((s) => s.label));
+  });
+
+  it('offers everything when there is little to offer', () => {
+    expect(pickOffer(day.slice(0, 2))).toHaveLength(2);
+    expect(pickOffer([])).toEqual([]);
   });
 });
