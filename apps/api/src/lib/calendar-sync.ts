@@ -19,6 +19,7 @@ import {
   resolveRouting,
   writeCalendarFor,
 } from './gcal';
+import { CALLABLE_STATUSES } from './shop-status';
 import { findStaff } from './staff';
 import { getSupabase } from './supabase';
 
@@ -93,6 +94,7 @@ export async function runCalendarSync(
     .from('shops')
     .select('*')
     .eq('integration', 'google_calendar')
+    .in('status', CALLABLE_STATUSES)
     .not('integration_credentials_encrypted', 'is', null);
   if (error || !shops) {
     console.log('[gcal-sync] shops select error:', error?.message);

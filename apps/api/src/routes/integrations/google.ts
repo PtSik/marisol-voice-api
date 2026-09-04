@@ -547,6 +547,26 @@ googleIntegrationRoutes.post('/select', async (c) => {
     );
   }
 
+  // Appointments can be booked after the phone line is activated but before Google is connected.
+  // Put every still-relevant orphan into the existing repair queue so the next calendar-sync tick
+  // creates the events; otherwise those bookings remain invisible to the owner's calendar forever.
+  const { error: backfillError } = await getSupabase(c.env)
+    .from('bookings')
+    .update({ gcal_sync_pending: true })
+    .eq('shop_id', shopId)
+    .eq('status', 'confirmed')
+    .is('gcal_event_id', null)
+    .gte('end_at', new Date().toISOString());
+  if (backfillError) {
+    console.error('[gcal-select] pending booking backfill failed:', backfillError.message);
+    return c.html(
+      page(
+        "<h1>Calendar connected, but sync needs attention</h1><p>Please try saving once more, or reply to your welcome email and we'll finish it.</p>",
+      ),
+      500,
+    );
+  }
+
   return c.html(
     page(
       '<h1>✅ Calendar connected</h1><p>Marisol will now book appointments straight into your Google Calendar. You can close this tab.</p>',

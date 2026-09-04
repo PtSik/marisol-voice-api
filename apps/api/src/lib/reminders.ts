@@ -1,4 +1,5 @@
 import type { WorkerBindings } from '../types';
+import { canServeCalls } from './shop-status';
 import { sendSms } from './sms';
 import { normalizeSmsLanguage, reminderSms, smsWhenLabel } from './sms-templates';
 import { getSupabase } from './supabase';
@@ -28,12 +29,13 @@ export interface DueBooking {
     timezone: string;
     twilio_number: string;
     reminders_enabled: boolean;
+    status: string;
   } | null;
 }
 
 export function composeReminder(booking: DueBooking): string | null {
   const shop = booking.shops;
-  if (!shop?.reminders_enabled) return null;
+  if (!shop?.reminders_enabled || !canServeCalls(shop.status)) return null;
   const lang = normalizeSmsLanguage(booking.language);
   const whenLabel = smsWhenLabel(new Date(booking.start_at).getTime(), shop.timezone, lang);
   return reminderSms(lang, { shopName: shop.name, whenLabel, staff: booking.staff });
@@ -43,12 +45,18 @@ export async function runReminders(
   env: WorkerBindings,
   nowMs = Date.now(),
 ): Promise<{ sent: number; skipped: number }> {
+  // Do not even claim rows while the launch-wide SMS switch is off. Claims happen before sends to
+  // prevent duplicates, so entering the loop would otherwise permanently mark an unsent reminder.
+  if (env.SMS_ENABLED !== 'true') {
+    console.log('[reminders] skipped: SMS_ENABLED is not true');
+    return { sent: 0, skipped: 0 };
+  }
   const db = getSupabase(env);
   const { from, to } = reminderWindow(nowMs);
   const { data, error } = await db
     .from('bookings')
     .select(
-      'id, customer_phone, staff, service, start_at, language, shops(name, timezone, twilio_number, reminders_enabled)',
+      'id, customer_phone, staff, service, start_at, language, shops(name, timezone, twilio_number, reminders_enabled, status)',
     )
     .eq('status', 'confirmed')
     .is('reminder_sent_at', null)

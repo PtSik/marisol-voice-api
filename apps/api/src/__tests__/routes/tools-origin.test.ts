@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'bun:test';
-import { hasPhoneContext } from '../../routes/tools/index';
+import { hasPhoneContext, resolveShopFrom } from '../../routes/tools/index';
+
+function shopDb(shop: { id: string; status: string }) {
+  return {
+    from: () => ({
+      select: () => ({
+        eq: () => ({ single: async () => ({ data: shop }) }),
+      }),
+    }),
+  } as unknown as Parameters<typeof resolveShopFrom>[0];
+}
 
 describe('tools — hasPhoneContext', () => {
   it('is true when called_number is present (flat phone body)', () => {
@@ -22,5 +32,34 @@ describe('tools — hasPhoneContext', () => {
     expect(hasPhoneContext({})).toBe(false);
     expect(hasPhoneContext(undefined)).toBe(false);
     expect(hasPhoneContext(null)).toBe(false);
+  });
+});
+
+describe('tools — assisted launch status gate', () => {
+  it('resolves an active shop', async () => {
+    const shop = await resolveShopFrom(shopDb({ id: 'shop-1', status: 'active' }), {
+      shopId: 'shop-1',
+      calledNumber: '',
+      conversationId: '',
+    });
+    expect(shop?.id).toBe('shop-1');
+  });
+
+  it('keeps legacy trial shops callable during the assisted-launch migration', async () => {
+    const shop = await resolveShopFrom(shopDb({ id: 'shop-1', status: 'trial' }), {
+      shopId: 'shop-1',
+      calledNumber: '',
+      conversationId: '',
+    });
+    expect(shop?.id).toBe('shop-1');
+  });
+
+  it('refuses a suspended shop even when its id is valid', async () => {
+    const shop = await resolveShopFrom(shopDb({ id: 'shop-1', status: 'suspended' }), {
+      shopId: 'shop-1',
+      calledNumber: '',
+      conversationId: '',
+    });
+    expect(shop).toBeNull();
   });
 });

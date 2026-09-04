@@ -40,24 +40,61 @@ export async function handleEscalate(
   }
 
   if (escalation_type === 'callback') {
+    // During assisted launch there is no callback consumer other than this SMS alert. With SMS
+    // disabled, recording a row and promising a callback would silently strand the caller.
+    if (c.env.SMS_ENABLED !== 'true') {
+      return c.json<ElevenLabsToolWebhookResponse>({
+        result: `Callback requests aren't available right now. I can transfer you to ${shop.name} instead if you'd like.`,
+        success: true,
+        data: { escalated: false, escalation_type: 'callback', callback_available: false },
+      });
+    }
+
     const db = getSupabase(c.env);
     const normalizedPhone = customer_phone ? (tryToE164(customer_phone) ?? customer_phone) : '';
-    await db.from('callbacks').insert({
-      shop_id: shop.id,
-      customer_phone: normalizedPhone,
-      reason: reason ?? null,
-      elevenlabs_conversation_id: conversationId.includes('{{') ? null : conversationId || null,
-      status: 'pending',
-    });
+    const normalizedOwner = tryToE164(shop.owner_escalation_phone);
+    if (!normalizedOwner) {
+      return c.json<ElevenLabsToolWebhookResponse>({
+        result: `I couldn't schedule a callback right now. I can transfer you to ${shop.name} instead if you'd like.`,
+        success: true,
+        data: { escalated: false, escalation_type: 'callback', callback_available: false },
+      });
+    }
+    const { data: callback, error } = await db
+      .from('callbacks')
+      .insert({
+        shop_id: shop.id,
+        customer_phone: normalizedPhone,
+        reason: reason ?? null,
+        elevenlabs_conversation_id: conversationId.includes('{{') ? null : conversationId || null,
+        status: 'pending',
+      })
+      .select('id')
+      .single();
+    if (error || !callback) {
+      return c.json<ElevenLabsToolWebhookResponse>({
+        result: `I couldn't schedule a callback right now. I can transfer you to ${shop.name} instead if you'd like.`,
+        success: true,
+        data: { escalated: false, escalation_type: 'callback', callback_available: false },
+      });
+    }
 
-    c.executionCtx.waitUntil(
-      sendSms(
-        c.env,
-        shop.twilio_number,
-        shop.owner_escalation_phone,
-        `${shop.name}: New callback request from ${normalizedPhone || 'unknown number'}. Reason: ${reason ?? 'n/a'}`,
-      ),
+    const notified = await sendSms(
+      c.env,
+      shop.twilio_number,
+      normalizedOwner,
+      `${shop.name}: New callback request from ${normalizedPhone || 'unknown number'}. Reason: ${reason ?? 'n/a'}`,
     );
+    if (!notified) {
+      // This SMS is the table's only consumer during assisted launch, so a row nobody will read
+      // must not outlive the answer the caller just got.
+      await db.from('callbacks').delete().eq('id', callback.id);
+      return c.json<ElevenLabsToolWebhookResponse>({
+        result: `I couldn't schedule a callback right now. I can transfer you to ${shop.name} instead if you'd like.`,
+        success: true,
+        data: { escalated: false, escalation_type: 'callback', callback_available: false },
+      });
+    }
 
     return c.json<ElevenLabsToolWebhookResponse>({
       result: `I've noted your callback request. Someone from ${shop.name} will be in touch shortly.`,
@@ -66,6 +103,14 @@ export async function handleEscalate(
     });
   }
 
+  const transferTo = tryToE164(shop.escalation_phone);
+  if (!transferTo) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: `I can't complete the transfer right now. Please try calling ${shop.name} directly.`,
+      success: true,
+      data: { escalated: false, escalation_type: 'transfer' },
+    });
+  }
   return c.json<ElevenLabsToolWebhookResponse>({
     result: `Transferring you to ${shop.name} now. Please hold.`,
     success: true,
@@ -73,7 +118,7 @@ export async function handleEscalate(
       escalated: true,
       escalation_type: 'transfer',
       message: `Transferring you to ${shop.name} now. Please hold.`,
-      transfer_to: shop.escalation_phone,
+      transfer_to: transferTo,
     },
   });
 }

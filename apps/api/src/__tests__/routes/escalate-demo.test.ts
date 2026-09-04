@@ -41,6 +41,30 @@ async function escalate(shop: ShopRow, params: EscalateParams) {
   };
 }
 
+async function callbackWhileSmsDisabled() {
+  const context = {
+    req: {
+      json: async () => ({
+        escalation_type: 'callback',
+        customer_phone: '+13055559999',
+        reason: 'price question',
+      }),
+      header: () => 'conv_test',
+    },
+    json: (body: unknown) => Response.json(body),
+    env: { SMS_ENABLED: 'false' },
+    get executionCtx(): never {
+      throw new Error('disabled callback reached an async SMS send');
+    },
+  } as unknown as Context<{ Bindings: WorkerBindings }>;
+  const res = await handleEscalate(context, realShop);
+  return (await res.json()) as {
+    result: string;
+    success: boolean;
+    data?: Record<string, unknown>;
+  };
+}
+
 describe('escalate — demo shops never reach a person', () => {
   it('does not hand back a transfer target', async () => {
     const body = await escalate(demoShop, { escalation_type: 'transfer', reason: 'wants a human' });
@@ -91,5 +115,14 @@ describe('escalate — real shops are untouched', () => {
     const body = await escalate(legacy as unknown as ShopRow, { escalation_type: 'transfer' });
 
     expect(body.data?.transfer_to).toBe(realShop.escalation_phone);
+  });
+
+  it('does not promise or file a callback while SMS is disabled', async () => {
+    const body = await callbackWhileSmsDisabled();
+    expect(body.success).toBe(true);
+    expect(body.data?.escalated).toBe(false);
+    expect(body.data?.callback_available).toBe(false);
+    expect(body.result).toMatch(/aren't available/i);
+    expect(body.result).not.toMatch(/will be in touch/i);
   });
 });

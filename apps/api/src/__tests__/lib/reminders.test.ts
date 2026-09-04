@@ -1,11 +1,18 @@
 import { describe, expect, it } from 'bun:test';
-import { type DueBooking, composeReminder, reminderWindow } from '../../lib/reminders';
+import {
+  type DueBooking,
+  composeReminder,
+  reminderWindow,
+  runReminders,
+} from '../../lib/reminders';
+import type { WorkerBindings } from '../../types';
 
 const shop = {
   name: 'Barbarossa Barbershop',
   timezone: 'America/New_York',
   twilio_number: '+18336596941',
   reminders_enabled: true,
+  status: 'active',
 };
 
 const booking: DueBooking = {
@@ -24,6 +31,13 @@ describe('reminderWindow', () => {
     const { from, to } = reminderWindow(now);
     expect(new Date(from).getTime() - now).toBe(23 * 3_600_000);
     expect(new Date(to).getTime() - now).toBe(25 * 3_600_000);
+  });
+});
+
+describe('runReminders launch gate', () => {
+  it('does not query or claim bookings while SMS is disabled', async () => {
+    const result = await runReminders({ SMS_ENABLED: 'false' } as WorkerBindings);
+    expect(result).toEqual({ sent: 0, skipped: 0 });
   });
 });
 
@@ -46,5 +60,8 @@ describe('composeReminder', () => {
   });
   it('returns null when the shop join is missing', () => {
     expect(composeReminder({ ...booking, shops: null })).toBeNull();
+  });
+  it('returns null for a suspended shop', () => {
+    expect(composeReminder({ ...booking, shops: { ...shop, status: 'suspended' } })).toBeNull();
   });
 });

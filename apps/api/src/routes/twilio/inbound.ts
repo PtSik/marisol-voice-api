@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { registerCall } from '../../lib/elevenlabs';
 import { toE164 } from '../../lib/normalize';
+import { canServeCalls } from '../../lib/shop-status';
 import { getSupabase } from '../../lib/supabase';
 import type { WorkerBindings } from '../../types';
 import { buildPersonalizationData } from '../webhooks/personalization';
@@ -68,6 +69,17 @@ export async function handleTwilioInbound(
 
   if (error || !shop) {
     return c.text('Not Found: shop not configured for this number', 404);
+  }
+
+  // Filtering status in the query would make this indistinguishable from an unknown number, and
+  // Twilio answers a 404 with its own application-error tone — nothing the caller can act on and
+  // nothing in the logs to say which line it was.
+  if (!canServeCalls(shop.status)) {
+    console.log(`[twilio-inbound] ${normalizedTo} not served: status ${shop.status}`);
+    return new Response(
+      '<?xml version="1.0" encoding="UTF-8"?><Response><Say>This number is not in service at the moment. Please try again later.</Say><Hangup/></Response>',
+      { headers: { 'Content-Type': 'application/xml' } },
+    );
   }
 
   const clientData = buildPersonalizationData(shop, fromNumber);

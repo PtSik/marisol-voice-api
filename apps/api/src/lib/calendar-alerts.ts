@@ -1,5 +1,5 @@
 import type { WorkerBindings } from '../types';
-import { sendSms } from './sms';
+import { sendDiscordAlert } from './discord';
 import { getSupabase } from './supabase';
 
 export type GcalFailureOp = 'busy' | 'write' | 'token' | 'sync';
@@ -61,27 +61,23 @@ interface FailureRow {
   shop_id: string | null;
   action?: string;
   payload: { op?: string; kind?: string; calendar_id?: string; message?: string } | null;
-  shops: { name: string; twilio_number: string } | null;
+  shops: { name: string } | null;
 }
 
 export interface CalendarAlert {
   shopId: string;
-  // Twilio rejects a From that isn't a number on the account, so alerts are sent from the
-  // number of the shop they are about — never from the team's own phone.
-  from: string;
   body: string;
 }
 
 export function alertLines(rows: FailureRow[]): CalendarAlert[] {
   const byShop = new Map<
     string,
-    { name: string; from: string; auth: number; transient: number; moves: number }
+    { name: string; auth: number; transient: number; moves: number }
   >();
   for (const row of rows) {
     if (!row.shop_id) continue;
     const entry = byShop.get(row.shop_id) ?? {
       name: row.shops?.name ?? row.shop_id,
-      from: row.shops?.twilio_number ?? '',
       auth: 0,
       transient: 0,
       moves: 0,
@@ -99,20 +95,17 @@ export function alertLines(rows: FailureRow[]): CalendarAlert[] {
     if (entry.moves > 0) {
       alerts.push({
         shopId,
-        from: entry.from,
         body: `Marisol: ${entry.name} — ${entry.moves} calendar event move${entry.moves > 1 ? 's' : ''} collide with existing bookings and were not applied. Calendar and bookings disagree; manual fix needed.`,
       });
     }
     if (entry.auth > 0) {
       alerts.push({
         shopId,
-        from: entry.from,
         body: `Marisol: ${entry.name} lost Google Calendar access (${entry.auth} auth failure${entry.auth > 1 ? 's' : ''} in the last hour). Their calendar has stopped syncing — reconnect needed.`,
       });
     } else if (entry.transient >= TRANSIENT_ALERT_THRESHOLD) {
       alerts.push({
         shopId,
-        from: entry.from,
         body: `Marisol: ${entry.name} had ${entry.transient} Google Calendar failures in the last hour. Bookings still work; calendar reads/writes are degraded.`,
       });
     }
@@ -126,12 +119,12 @@ export async function runCalendarAlerts(
   env: WorkerBindings,
   nowMs = Date.now(),
 ): Promise<{ alerted: number }> {
-  if (!env.TEAM_ALERT_PHONE) return { alerted: 0 };
+  if (!env.DISCORD_ALERT_WEBHOOK_URL) return { alerted: 0 };
 
   const since = new Date(nowMs - 3_600_000).toISOString();
   const { data, error } = await getSupabase(env)
     .from('audit_log')
-    .select('shop_id, action, payload, shops(name, twilio_number)')
+    .select('shop_id, action, payload, shops(name)')
     .in('action', ['gcal_failure', 'gcal_move_conflict'])
     .gte('created_at', since);
   if (error || !data) {
@@ -142,15 +135,9 @@ export async function runCalendarAlerts(
   const alerts = alertLines(data as unknown as FailureRow[]);
   let alerted = 0;
   for (const alert of alerts) {
-    // The team gets these, not the shop: only we can walk an owner through reconnecting.
-    const from = env.TWILIO_SMS_FROM || alert.from;
-    if (!from) {
-      console.log('[gcal-alert] no sender number for shop', alert.shopId);
-      continue;
-    }
-    const sent = await sendSms(env, from, env.TEAM_ALERT_PHONE, alert.body);
+    const sent = await sendDiscordAlert(env, alert.body);
     if (sent) alerted++;
-    else console.log('[gcal-alert] send failed for shop', alert.shopId);
+    else console.log('[gcal-alert] Discord send failed for shop', alert.shopId);
   }
   return { alerted };
 }

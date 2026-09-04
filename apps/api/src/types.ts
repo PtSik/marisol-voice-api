@@ -302,13 +302,15 @@ export interface WorkerBindings {
   TWILIO_ACCOUNT_SID: string;
   TWILIO_AUTH_TOKEN: string;
   TWILIO_SMS_FROM?: string;
+  // Fail closed: SMS stays disabled unless production explicitly opts in after A2P registration.
+  SMS_ENABLED?: string;
   ENCRYPTION_KEY: string;
   ADMIN_API_KEYS: string;
   ADMIN_IP_ALLOWLIST?: string;
   GOOGLE_OAUTH_CLIENT_ID?: string;
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
-  // Unset means calendar failure alerts are off.
-  TEAM_ALERT_PHONE?: string;
+  // Secret incoming-webhook URL. Unset means team alerts are off.
+  DISCORD_ALERT_WEBHOOK_URL?: string;
 }
 
 export interface WorkerVariables {

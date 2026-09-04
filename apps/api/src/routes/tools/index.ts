@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { tryToE164 } from '../../lib/normalize';
+import { canServeCalls } from '../../lib/shop-status';
 import { getSupabase } from '../../lib/supabase';
 import { verifyToolSecret } from '../../middleware/verify-tool-secret';
 import type { ShopRow, WorkerBindings } from '../../types';
@@ -54,7 +55,9 @@ export async function resolveShopFrom(
   // 1. Deterministic: the shop_id dynamic variable injected at call start → primary key.
   if (ids.shopId) {
     const { data: shop } = await db.from('shops').select('*').eq('id', ids.shopId).single();
-    if (shop) return shop as ShopRow;
+    // Answering "not serving" rather than falling through: a recycled twilio_number would
+    // otherwise resolve this call to whichever active shop holds that number now.
+    if (shop) return canServeCalls(shop.status) ? (shop as ShopRow) : null;
   }
 
   // 2. Deterministic: the dialed number → unique twilio_number. Always present on Twilio
@@ -67,7 +70,7 @@ export async function resolveShopFrom(
         .select('*')
         .eq('twilio_number', normalized)
         .single();
-      if (shop) return shop as ShopRow;
+      if (shop) return canServeCalls(shop.status) ? (shop as ShopRow) : null;
     }
   }
 
@@ -79,7 +82,7 @@ export async function resolveShopFrom(
       .eq('elevenlabs_conversation_id', ids.conversationId)
       .single();
     const shop = (data as unknown as { shops: ShopRow | null } | null)?.shops ?? null;
-    if (shop) return shop;
+    if (shop) return canServeCalls(shop.status) ? shop : null;
   }
 
   return null;

@@ -6,7 +6,7 @@ function row(kind: string, shopId = 'shop_1', name = 'Bella Salon') {
   return {
     shop_id: shopId,
     payload: { op: 'busy', kind },
-    shops: { name, twilio_number: '+15551230000' },
+    shops: { name },
   };
 }
 
@@ -54,12 +54,6 @@ describe('alertLines', () => {
     expect(alertLines([{ shop_id: null, payload: { kind: 'auth' }, shops: null }])).toEqual([]);
   });
 
-  // Twilio rejects a From that is not a number on the account, so the alert carries the
-  // shop's own Twilio number as sender — sending from the team's phone would never deliver.
-  it("sends from the shop's Twilio number", () => {
-    expect(alertLines([row('auth')])[0]?.from).toBe('+15551230000');
-  });
-
   it('alerts on the first move conflict — calendar and register stay divorced until fixed', () => {
     const alerts = alertLines([
       { ...row('transient'), action: 'gcal_move_conflict', payload: { booking_id: 'bk_1' } },
@@ -78,7 +72,7 @@ describe('alertLines', () => {
 });
 
 describe('runCalendarAlerts', () => {
-  it('does nothing and does not throw when no alert number is configured', async () => {
+  it('does nothing and does not throw when no Discord webhook is configured', async () => {
     const env = { SUPABASE_URL: '' } as unknown as WorkerBindings;
     expect(await runCalendarAlerts(env)).toEqual({ alerted: 0 });
   });
