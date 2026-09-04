@@ -11,6 +11,10 @@ docs/research/
 
 CLAUDE.md
 
+# Design specs — local only, never committed
+docs/specs/
+
 # The landing app is its own repo, checked out inside this tree — never commit it here.
 kaijiro-voice-landing/
+kaijiro_voice_landing/
 .DS_Store

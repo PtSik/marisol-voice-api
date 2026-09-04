@@ -43,6 +43,15 @@ function isValidIsDemo(v: unknown): boolean {
   return v === undefined || typeof v === 'boolean';
 }
 
+// Mirrors the CHECK in migration 0015. Undefined is valid — the column defaults to 'trial'. Without
+// this a typo'd status lands as a Postgres cast error, and a status the lookups do not know about
+// (see CALLABLE_STATUSES) is a shop whose number answers 404 with nothing to say why.
+const SHOP_STATUSES = ['trial', 'active', 'cancelled', 'suspended', 'demo'];
+
+function isValidStatus(v: unknown): boolean {
+  return v === undefined || (typeof v === 'string' && SHOP_STATUSES.includes(v));
+}
+
 function isValidHoursValue(v: unknown): boolean {
   if (typeof v !== 'string') return false;
   if (v.trim().toLowerCase() === 'closed') return true;
@@ -228,6 +237,10 @@ adminRoutes.post('/shops', async (c) => {
     return c.json({ error: 'is_demo must be a boolean' }, 400);
   }
 
+  if (!isValidStatus(body.status)) {
+    return c.json({ error: `status must be one of: ${SHOP_STATUSES.join(', ')}` }, 400);
+  }
+
   const db = getSupabase(c.env);
   const { data, error } = await db.from('shops').insert(body).select().single();
   if (error) return c.json({ error: error.message }, 400);
@@ -261,6 +274,10 @@ export function buildShopUpdate(
       update[key] = value;
     } else if (key === 'is_demo') {
       if (!isValidIsDemo(value)) return { error: 'is_demo must be a boolean' };
+      update[key] = value;
+    } else if (key === 'status') {
+      if (!isValidStatus(value))
+        return { error: `status must be one of: ${SHOP_STATUSES.join(', ')}` };
       update[key] = value;
     } else {
       update[key] = value;
