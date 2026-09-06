@@ -25,6 +25,7 @@ const MUTABLE_FIELDS = new Set([
   'calendar_routing',
   'elevenlabs_agent_id',
   'primary_language',
+  'calendar_access_granted_at',
   'is_demo',
   'account_id',
   'status',
@@ -269,6 +270,10 @@ export function buildShopUpdate(
       const r = validateCalendarRouting(value);
       if ('error' in r) return r;
       update[key] = r.value;
+    } else if (key === 'calendar_access_granted_at') {
+      if (value !== null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value))))
+        return { error: 'invalid calendar access date' };
+      update[key] = value;
     } else if (key === 'primary_language') {
       if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };
       update[key] = value;

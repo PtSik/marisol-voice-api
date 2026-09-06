@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'bun:test';
 import { parseStaff } from '../../lib/staff';
-import { colorMapMarkup } from '../../routes/integrations/google';
-import type { CalendarRouting } from '../../types';
+import {
+  canConnectCalendar,
+  colorMapMarkup,
+  portalReturnLink,
+  selectForm,
+} from '../../routes/integrations/google';
+import type { CalendarRouting, ShopRow, WorkerBindings } from '../../types';
 
 const staff = parseStaff(
   JSON.stringify([
@@ -55,5 +60,51 @@ describe('colorMapMarkup', () => {
     ]);
     expect(selectedFor(html, '5')).toBe('stf_ana');
     expect(html).not.toContain('suggested from');
+  });
+});
+
+describe('assisted calendar access', () => {
+  it('requires a grant for new connections and denies inactive shops even with an old grant', () => {
+    expect(canConnectCalendar({ status: 'active', integration: 'none' } as ShopRow)).toBe(false);
+    expect(
+      canConnectCalendar({ status: 'active', calendar_access_granted_at: '2026-09-06' } as ShopRow),
+    ).toBe(true);
+    expect(
+      canConnectCalendar({ status: 'active', integration: 'google_calendar' } as ShopRow),
+    ).toBe(true);
+    for (const status of ['cancelled', 'suspended', 'pending_review']) {
+      expect(
+        canConnectCalendar({
+          status,
+          calendar_access_granted_at: '2026-09-06',
+          integration: 'google_calendar',
+        } as ShopRow),
+      ).toBe(false);
+    }
+  });
+  it('only renders a configured HTTPS return link', () => {
+    expect(
+      portalReturnLink({
+        PORTAL_URL: 'https://app.callmarisol.com/portal/calendar',
+      } as WorkerBindings),
+    ).toContain('Return to your dashboard');
+    expect(portalReturnLink({ PORTAL_URL: 'javascript:alert(1)' } as WorkerBindings)).toBe('');
+    expect(portalReturnLink({} as WorkerBindings)).toBe('');
+  });
+  it('keeps advanced mappings in the form while hiding them until requested', () => {
+    const input = {
+      shopId: 'shop',
+      sig: 'sig',
+      calendars: [],
+      staff,
+      routing: { ...routing({}), attribution: { mode: 'off' as const } },
+    };
+    const html = selectForm(input);
+    expect(html).toContain('<summary>More options</summary>');
+    expect(html).toContain('id="color-map" hidden');
+    expect(fields(html)).toHaveLength(11);
+    expect(selectForm({ ...input, routing: routing({ '5': 'stf_ana' }) })).toContain(
+      'id="color-map"><p',
+    );
   });
 });

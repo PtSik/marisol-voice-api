@@ -16,6 +16,7 @@ SUPABASE_URL = "https://ypvlndfdszdinvpebumb.supabase.co"
 ENVIRONMENT = "development"
 # Launch gate: opt in only after the US A2P brand and campaign are approved and tested.
 SMS_ENABLED = "false"
+PORTAL_URL = "https://app.callmarisol.com/portal/calendar"
 
 # Secrets — set via: wrangler secret put <NAME>
 # SUPABASE_SERVICE_ROLE_KEY

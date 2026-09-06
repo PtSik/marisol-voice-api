@@ -229,6 +229,7 @@ export interface ShopRow {
   // `handleEscalate`. Optional so a row selected before migration 0014 still types.
   is_demo?: boolean;
   reminders_enabled: boolean;
+  calendar_access_granted_at?: string | null;
   status: string;
   trial_ends_at: string | null;
   cancelled_at: string | null;
@@ -304,6 +305,7 @@ export interface WorkerBindings {
   TWILIO_SMS_FROM?: string;
   // Fail closed: SMS stays disabled unless production explicitly opts in after A2P registration.
   SMS_ENABLED?: string;
+  PORTAL_URL?: string;
   ENCRYPTION_KEY: string;
   ADMIN_API_KEYS: string;
   ADMIN_IP_ALLOWLIST?: string;

@@ -1,5 +1,6 @@
 import type { WorkerBindings } from '../types';
 import { sendDiscordAlert } from './discord';
+import { CALLABLE_STATUSES, canServeCalls } from './shop-status';
 import { getSupabase } from './supabase';
 
 export type GcalFailureOp = 'busy' | 'write' | 'token' | 'sync';
@@ -61,7 +62,7 @@ interface FailureRow {
   shop_id: string | null;
   action?: string;
   payload: { op?: string; kind?: string; calendar_id?: string; message?: string } | null;
-  shops: { name: string } | null;
+  shops: { name: string; status?: string } | null;
 }
 
 export interface CalendarAlert {
@@ -75,7 +76,7 @@ export function alertLines(rows: FailureRow[]): CalendarAlert[] {
     { name: string; auth: number; transient: number; moves: number }
   >();
   for (const row of rows) {
-    if (!row.shop_id) continue;
+    if (!row.shop_id || !canServeCalls(row.shops?.status)) continue;
     const entry = byShop.get(row.shop_id) ?? {
       name: row.shops?.name ?? row.shop_id,
       auth: 0,
@@ -124,7 +125,8 @@ export async function runCalendarAlerts(
   const since = new Date(nowMs - 3_600_000).toISOString();
   const { data, error } = await getSupabase(env)
     .from('audit_log')
-    .select('shop_id, action, payload, shops(name)')
+    .select('shop_id, action, payload, shops!inner(name, status)')
+    .in('shops.status', CALLABLE_STATUSES)
     .in('action', ['gcal_failure', 'gcal_move_conflict'])
     .gte('created_at', since);
   if (error || !data) {

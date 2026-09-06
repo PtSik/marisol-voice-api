@@ -6,7 +6,7 @@ function row(kind: string, shopId = 'shop_1', name = 'Bella Salon') {
   return {
     shop_id: shopId,
     payload: { op: 'busy', kind },
-    shops: { name },
+    shops: { name, status: 'active' },
   };
 }
 
@@ -76,4 +76,10 @@ describe('runCalendarAlerts', () => {
     const env = { SUPABASE_URL: '' } as unknown as WorkerBindings;
     expect(await runCalendarAlerts(env)).toEqual({ alerted: 0 });
   });
+});
+
+it('does not alert for inactive shops, including old logs after cancellation', () => {
+  for (const status of ['suspended', 'cancelled', 'pending_review', undefined]) {
+    expect(alertLines([{ ...row('auth'), shops: { name: 'Salon', status } }])).toEqual([]);
+  }
 });

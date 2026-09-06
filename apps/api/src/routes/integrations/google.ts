@@ -10,6 +10,7 @@ import {
   getGCalClient,
   resolveRouting,
 } from '../../lib/gcal';
+import { canServeCalls } from '../../lib/shop-status';
 import { type StaffMember, parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import type { CalendarAttribution, CalendarRouting, ShopRow, WorkerBindings } from '../../types';
@@ -73,6 +74,24 @@ function esc(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
+export function canConnectCalendar(shop: ShopRow | null): boolean {
+  return Boolean(
+    shop &&
+      canServeCalls(shop.status) &&
+      (shop.calendar_access_granted_at || shop.integration === 'google_calendar'),
+  );
+}
+
+export function portalReturnLink(env: WorkerBindings): string {
+  try {
+    const url = new URL(env.PORTAL_URL ?? '');
+    if (url.protocol !== 'https:') return '';
+    return `<p style="margin-top:20px"><a href="${esc(url.toString())}">Return to your dashboard</a></p>`;
+  } catch {
+    return '';
+  }
+}
+
 export const googleIntegrationRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
 googleIntegrationRoutes.get('/start', async (c) => {
@@ -92,6 +111,14 @@ googleIntegrationRoutes.get('/start', async (c) => {
         "<h1>Calendar connect isn't available yet</h1><p>Please reply to your welcome email and we'll connect it for you.</p>",
       ),
       503,
+    );
+  }
+  if (!canConnectCalendar(await loadShop(c.env, shopId))) {
+    return c.html(
+      page(
+        '<h1>Calendar access is not ready</h1><p>We’ll email you when your calendar access is ready. Contact us if you need help.</p>',
+      ),
+      403,
     );
   }
   const redirectUri = `${new URL(c.req.url).origin}/integrations/google/callback`;
@@ -129,6 +156,14 @@ googleIntegrationRoutes.get('/callback', async (c) => {
     );
   }
 
+  if (!canConnectCalendar(await loadShop(c.env, shopId))) {
+    return c.html(
+      page(
+        '<h1>Calendar access is not ready</h1><p>We’ll email you when your calendar access is ready. Contact us if you need help.</p>',
+      ),
+      403,
+    );
+  }
   const redirectUri = `${new URL(c.req.url).origin}/integrations/google/callback`;
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
@@ -272,7 +307,7 @@ staff.forEach(function(s){s.addEventListener('change',apply);});
 apply();
 })();</script>`;
 
-function selectForm(input: {
+export function selectForm(input: {
   shopId: string;
   sig: string;
   calendars: GCalCalendar[];
@@ -331,6 +366,7 @@ ${input.error ? `<p class="err">${esc(input.error)}</p>` : ''}
 <h2>Where should bookings be saved?</h2>
 <label for="write_calendar">Main calendar</label>
 <select id="write_calendar" name="write_calendar">${calendarOptions(writable, writeSelected)}</select>
+<details class="more"><summary>More options</summary>
 ${staff.length > 0 ? `<h2>Calendar per staff member</h2><p class="note">Optional — leave on “Main calendar” if everyone shares one.</p>${staffRows}` : ''}
 <h2>Also check these for busy times</h2>
 <p class="note">We only read these — nothing is ever written there. Pick up to ${MAX_BUSY_CALENDARS}.</p>
@@ -344,13 +380,18 @@ ${
 <div class="check"><input type="radio" id="attr_color" name="attribution_mode" value="color"${mode === 'color' ? ' checked' : ''}><label for="attr_color">I colour-code entries by person</label></div>
 <div class="check"><input type="radio" id="attr_title" name="attribution_mode" value="title_prefix"${mode === 'title_prefix' ? ' checked' : ''}><label for="attr_title">I start the title with the person's name (“Ana — haircut”)</label></div>
 </fieldset>
-<p class="note">If you colour-code, tell us whose colour is whose:</p>
-${colorRows}`
+<div id="color-map"${mode === 'color' ? '' : ' hidden'}><p class="note">If you colour-code, tell us whose colour is whose:</p>
+${colorRows}</div>`
     : ''
 }
+</details>
 <p class="note">Your staff will see these appointments only if you've shared that calendar with them in Google Calendar. Bookings are always saved here for you either way.</p>
 <button type="submit">Save and finish</button>
-</form>${BUSY_SYNC_SCRIPT}`;
+</form>${BUSY_SYNC_SCRIPT}<script>
+(function(){const map=document.getElementById('color-map');if(!map)return;
+function sync(){map.hidden=!document.getElementById('attr_color').checked;}
+document.querySelectorAll('input[name="attribution_mode"]').forEach(function(input){input.addEventListener('change',sync);});sync();})();
+</script>`;
 }
 
 async function calendarContext(
@@ -361,7 +402,7 @@ async function calendarContext(
   | { error: keyof typeof CONTEXT_ERROR_PAGES; status: 400 | 500 | 502 }
 > {
   const shop = await loadShop(c.env, shopId);
-  if (!shop || !shop.integration_credentials_encrypted) {
+  if (!shop || !canConnectCalendar(shop) || !shop.integration_credentials_encrypted) {
     return { error: 'no_connection', status: 400 };
   }
   try {
@@ -569,7 +610,7 @@ googleIntegrationRoutes.post('/select', async (c) => {
 
   return c.html(
     page(
-      '<h1>✅ Calendar connected</h1><p>Marisol will now book appointments straight into your Google Calendar. You can close this tab.</p>',
+      `<h1>✅ Calendar connected</h1><p>Marisol will now book appointments straight into your Google Calendar.</p>${portalReturnLink(c.env)}`,
     ),
     200,
   );
