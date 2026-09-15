@@ -17,6 +17,7 @@ import {
   validateBookingTime,
 } from '../../lib/hours';
 import { tryToE164 } from '../../lib/normalize';
+import { serviceDuration } from '../../lib/service-catalog';
 import { sendSms } from '../../lib/sms';
 import {
   bookingConfirmationSms,
@@ -50,12 +51,20 @@ export async function handleBookAppointment(
   const {
     staff_name,
     start_time,
-    duration_minutes,
+    duration_minutes: requestedDuration,
     customer_phone,
     customer_name,
     service,
     notes,
   } = params;
+  const configuredDuration = serviceDuration(shop.service_catalog, service);
+  if (configuredDuration === null)
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result:
+        'Please choose a service from this business’s service list before booking. Do not invent a service or duration.',
+    });
+  const duration_minutes = configuredDuration ?? requestedDuration;
   const language = normalizeSmsLanguage(params.language);
 
   // Staff and opening-hours checks run before the web-demo short circuit below: both are pure
@@ -105,7 +114,7 @@ export async function handleBookAppointment(
 
   // Race guard against foreign calendar events (Booksy / manual GCal entries) — the GiST
   // EXCLUDE only catches our own bookings. Our mirrored events are deduped by gcal_event_id.
-  if (shop.integration === 'google_calendar' && shop.integration_credentials_encrypted) {
+  if (shop.integration === 'google_calendar') {
     const [ownRes, busy] = await Promise.all([
       db
         .from('bookings')
@@ -118,6 +127,13 @@ export async function handleBookAppointment(
         waitUntil: (p) => c.executionCtx.waitUntil(p),
       }),
     ]);
+    if (ownRes.error || busy.unavailable) {
+      return c.json<ElevenLabsToolWebhookResponse>({
+        success: false,
+        result:
+          'I can’t verify the appointment calendar right now. No appointment has been made. Please try again shortly.',
+      });
+    }
     const ownEventIds = new Set(
       (ownRes.data ?? []).map((b) => b.gcal_event_id).filter((id): id is string => !!id),
     );
@@ -142,7 +158,7 @@ export async function handleBookAppointment(
       shop_id: shop.id,
       customer_phone: normalizedPhone,
       customer_name: customer_name ?? null,
-      staff: staff_name,
+      staff: member?.name ?? staff_name,
       service: service ?? null,
       start_at: start_time,
       end_at: endAt,
@@ -229,7 +245,7 @@ export async function handleBookAppointment(
     bookingConfirmationSms(language, {
       shopName: shop.name,
       whenLabel: smsLabel,
-      staff: staff_name,
+      staff: member?.name ?? staff_name,
       code,
     }),
   );

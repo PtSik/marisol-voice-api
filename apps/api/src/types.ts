@@ -206,6 +206,8 @@ export interface CalendarRouting {
 }
 
 export interface ShopRow {
+  transfers_enabled?: boolean;
+  service_catalog?: Array<{ name: string; duration_minutes: number }> | null;
   id: string;
   name: string;
   twilio_number: string;

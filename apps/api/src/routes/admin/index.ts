@@ -1,9 +1,17 @@
 import { Hono } from 'hono';
+import {
+  canWriteTo,
+  gcalListCalendars,
+  getGCalClient,
+  getStaffBusy,
+  resolveRouting,
+} from '../../lib/gcal';
 import { parseTime } from '../../lib/hours';
+import { validServiceCatalog } from '../../lib/service-catalog';
 import { parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import { adminAuth } from '../../middleware/admin-auth';
-import type { CalendarRouting, WorkerBindings } from '../../types';
+import type { CalendarRouting, ShopRow, WorkerBindings } from '../../types';
 import { accountRoutes } from './accounts';
 import { referralRoutes } from './referrals';
 
@@ -18,6 +26,8 @@ const MUTABLE_FIELDS = new Set([
   'hours_json',
   'closures_json',
   'services_json',
+  'service_catalog',
+  'transfers_enabled',
   'staff_json',
   'address',
   'notes',
@@ -203,6 +213,51 @@ adminRoutes.get('/shops/:id', async (c) => {
   return c.json({ shop: data });
 });
 
+// Read-only readiness check for prepared shops. This is an admin-only endpoint and
+// returns no credentials, event titles, or calendar contents.
+adminRoutes.get('/shops/:id/calendar-check', async (c) => {
+  const { data, error } = await getSupabase(c.env)
+    .from('shops')
+    .select('*')
+    .eq('id', c.req.param('id'))
+    .single();
+  if (error || !data) return c.json({ error: 'Shop not found' }, 404);
+  const shop = data as ShopRow;
+  if (
+    shop.integration !== 'google_calendar' ||
+    !shop.integration_credentials_encrypted ||
+    !shop.calendar_routing
+  )
+    return c.json({ error: 'Finish connecting and selecting calendars' }, 409);
+  try {
+    const client = await getGCalClient(
+      c.env,
+      shop.integration_credentials_encrypted,
+      AbortSignal.timeout(5000),
+    );
+    const calendars = await gcalListCalendars(client.token, AbortSignal.timeout(5000));
+    const writable = new Set(calendars.filter(canWriteTo).map((cal) => cal.id));
+    const routing = resolveRouting(shop);
+    if (
+      ![routing.write_calendar_id, ...Object.values(routing.staff_calendars)].every((id) =>
+        writable.has(id),
+      )
+    )
+      return c.json({ error: 'A booking calendar is no longer writable' }, 409);
+    const busy = await getStaffBusy(
+      c.env,
+      shop,
+      new Date().toISOString(),
+      new Date(Date.now() + 7 * 86400000).toISOString(),
+      { timeoutMs: 5000, waitUntil: (p) => c.executionCtx.waitUntil(p) },
+    );
+    if (busy.unavailable) return c.json({ error: 'Could not read every required calendar' }, 503);
+    return c.json({ ok: true, checkedAt: new Date().toISOString() });
+  } catch {
+    return c.json({ error: 'Calendar access could not be verified' }, 503);
+  }
+});
+
 adminRoutes.post('/shops', async (c) => {
   let body: Record<string, unknown>;
   try {
@@ -222,6 +277,10 @@ adminRoutes.post('/shops', async (c) => {
     if (!body[field]) return c.json({ error: `Missing required field: ${field}` }, 400);
   }
 
+  if (body.service_catalog !== undefined && !validServiceCatalog(body.service_catalog))
+    return c.json({ error: 'Invalid service catalog' }, 400);
+  if (body.transfers_enabled !== undefined && typeof body.transfers_enabled !== 'boolean')
+    return c.json({ error: 'Invalid transfer setting' }, 400);
   // Provisioning creates shops through here, so canonicalise staff on the way in — a shop
   // must have stable staff ids from its first second.
   if (body.staff_json !== undefined) {
@@ -273,6 +332,13 @@ export function buildShopUpdate(
     } else if (key === 'calendar_access_granted_at') {
       if (value !== null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value))))
         return { error: 'invalid calendar access date' };
+      update[key] = value;
+    } else if (key === 'service_catalog') {
+      if (!validServiceCatalog(value))
+        return { error: 'service_catalog must contain valid fixed-duration services' };
+      update[key] = value;
+    } else if (key === 'transfers_enabled') {
+      if (typeof value !== 'boolean') return { error: 'transfers_enabled must be a boolean' };
       update[key] = value;
     } else if (key === 'primary_language') {
       if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };

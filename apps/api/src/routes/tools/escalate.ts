@@ -39,6 +39,15 @@ export async function handleEscalate(
     });
   }
 
+  if (shop.transfers_enabled === false) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result:
+        'Live transfers and callback requests are not available for this business right now. I can still help with business questions and appointments.',
+      success: true,
+      data: { escalated: false, escalation_type, callback_available: false },
+    });
+  }
+
   if (escalation_type === 'callback') {
     // During assisted launch there is no callback consumer other than this SMS alert. With SMS
     // disabled, recording a row and promising a callback would silently strand the caller.

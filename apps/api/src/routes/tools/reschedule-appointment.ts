@@ -1,14 +1,22 @@
 import type { Context } from 'hono';
+import { splitByAttribution } from '../../lib/attribution';
 import { logGcalFailure } from '../../lib/calendar-alerts';
-import { gcalPatchEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
+import {
+  gcalPatchEvent,
+  getGCalClient,
+  getStaffBusy,
+  resolveRouting,
+  writeCalendarFor,
+} from '../../lib/gcal';
 import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
+import { serviceDuration } from '../../lib/service-catalog';
 import { sendSms } from '../../lib/sms';
 import {
   normalizeSmsLanguage,
   rescheduleConfirmationSms,
   smsWhenLabel,
 } from '../../lib/sms-templates';
-import { findStaff } from '../../lib/staff';
+import { findStaff, parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
 import {
   BOOKING_CODE_TTL_MINUTES,
@@ -46,7 +54,7 @@ export async function handleRescheduleAppointment(
   const { data: booking } = await db
     .from('bookings')
     .select(
-      'id, shop_id, customer_phone, staff, start_at, end_at, gcal_event_id, gcal_calendar_id, status, language',
+      'id, shop_id, customer_phone, staff, service, start_at, end_at, gcal_event_id, gcal_calendar_id, status, language',
     )
     .eq('id', booking_id)
     .single();
@@ -63,11 +71,26 @@ export async function handleRescheduleAppointment(
 
   // Validate the new time before consuming the single-use code, so a bad time doesn't
   // burn the caller's code.
+  const configuredDuration = serviceDuration(shop.service_catalog, booking.service);
+  if (configuredDuration === null)
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result:
+        'This appointment’s service needs to be checked by the business before it can be moved. The original appointment is unchanged.',
+    });
   const durationMinutes =
+    configuredDuration ??
     new_duration_minutes ??
     Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000);
 
-  const staff = new_staff_name ?? booking.staff;
+  const requestedStaff = new_staff_name ?? booking.staff;
+  const member = findStaff(shop.staff_json, requestedStaff);
+  if (!member && parseStaff(shop.staff_json).length > 0)
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result: 'Please choose an existing team member.',
+    });
+  const staff = member?.name ?? requestedStaff;
   const validation = validateBookingTime(
     shop,
     new_start_time,
@@ -81,14 +104,6 @@ export async function handleRescheduleAppointment(
     });
   }
 
-  const valid = await verifyCode(db, booking_id, code);
-  if (!valid) {
-    return c.json<ElevenLabsToolWebhookResponse>({
-      result: 'Invalid or expired verification code.',
-      success: false,
-    });
-  }
-
   const language = normalizeSmsLanguage(params.language ?? booking.language);
   const newEndAt = new Date(
     new Date(new_start_time).getTime() + durationMinutes * 60000,
@@ -96,6 +111,70 @@ export async function handleRescheduleAppointment(
 
   const hasCalendar =
     shop.integration === 'google_calendar' && !!shop.integration_credentials_encrypted;
+
+  if (shop.integration === 'google_calendar') {
+    const routing = resolveRouting(shop);
+    if (
+      booking.gcal_event_id &&
+      writeCalendarFor(shop, member?.id) !== (booking.gcal_calendar_id ?? routing.write_calendar_id)
+    ) {
+      return c.json<ElevenLabsToolWebhookResponse>({
+        success: false,
+        result:
+          "Changing this appointment to another person's calendar needs help from the business. The original appointment is unchanged.",
+      });
+    }
+    const [own, busy] = await Promise.all([
+      db
+        .from('bookings')
+        .select('gcal_event_id')
+        .eq('shop_id', shop.id)
+        .eq('status', 'confirmed')
+        .lt('start_at', newEndAt)
+        .gt('end_at', new_start_time),
+      getStaffBusy(c.env, shop, new_start_time, newEndAt, {
+        waitUntil: (p) => c.executionCtx.waitUntil(p),
+      }),
+    ]);
+    if (own.error || busy.unavailable)
+      return c.json<ElevenLabsToolWebhookResponse>({
+        success: false,
+        result:
+          'I can’t verify the calendar right now. Your original appointment is unchanged. Please try again shortly.',
+      });
+    const ownIds = new Set((own.data ?? []).map((b) => b.gcal_event_id));
+    if (booking.gcal_event_id) ownIds.add(booking.gcal_event_id);
+    const foreign = splitByAttribution(
+      busy.shared.filter((b) => !ownIds.has(b.id)),
+      Object.fromEntries(
+        Object.entries(busy.perStaff).map(([id, entries]) => [
+          id,
+          entries.filter((b) => !ownIds.has(b.id)),
+        ]),
+      ),
+      routing.attribution,
+      parseStaff(shop.staff_json),
+    );
+    const blocking = [...foreign.shared, ...(member ? (foreign.perStaff[member.id] ?? []) : [])];
+    if (
+      blocking.some(
+        (b) => b.start < new Date(newEndAt).getTime() && b.end > new Date(new_start_time).getTime(),
+      )
+    )
+      return c.json<ElevenLabsToolWebhookResponse>({
+        success: false,
+        result:
+          'That time is unavailable. Your original appointment is unchanged. Please choose another time.',
+      });
+  }
+
+  const valid = await verifyCode(db, booking_id, code);
+  if (!valid) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: 'Invalid or expired verification code.',
+      success: false,
+    });
+  }
 
   const { error } = await db
     .from('bookings')

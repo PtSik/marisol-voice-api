@@ -25,8 +25,15 @@ export function buildPersonalizationData(
     // Empty string rather than null: the prompt renders these inline, and "null" spoken aloud is
     // worse than a blank the agent can recognise as "I wasn't given this".
     shop_address: shop.address?.trim() ?? '',
-    shop_notes: shop.notes?.trim() ?? '',
-    escalation_phone: shop.escalation_phone,
+    shop_notes: [
+      shop.notes?.trim(),
+      shop.transfers_enabled === false
+        ? 'Live transfers and callbacks are disabled. Do not offer them or promise messages.'
+        : '',
+    ]
+      .filter(Boolean)
+      .join('\n'),
+    escalation_phone: shop.transfers_enabled === false ? '' : shop.escalation_phone,
     ai_disclosure_text: shop.ai_disclosure_text,
     caller_phone: callerPhone,
     shop_timezone: shop.timezone,

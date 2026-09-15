@@ -100,11 +100,11 @@ describe('assisted calendar access', () => {
       routing: { ...routing({}), attribution: { mode: 'off' as const } },
     };
     const html = selectForm(input);
-    expect(html).toContain('<summary>More options</summary>');
-    expect(html).toContain('id="color-map" hidden');
+    expect(html).toContain('<summary>Advanced: appointments in a shared calendar</summary>');
+    expect(html).toContain('id="color_mapping" hidden');
     expect(fields(html)).toHaveLength(11);
     expect(selectForm({ ...input, routing: routing({ '5': 'stf_ana' }) })).toContain(
-      'id="color-map"><p',
+      'id="color_mapping"><p',
     );
   });
 });

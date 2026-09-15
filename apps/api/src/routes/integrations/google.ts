@@ -61,9 +61,9 @@ async function validSig(env: WorkerBindings, shopId: string, sig: string): Promi
 
 function page(body: string, form = false): string {
   const formStyles = form
-    ? '.card{max-width:560px;text-align:left}h2{font-size:15px;margin:26px 0 10px}label{display:block;font-size:14px;margin:0 0 6px;color:#241B14}select{width:100%;padding:9px 10px;border:1px solid #E2D8CB;border-radius:8px;background:#fff;font-size:14px;margin:0 0 14px}fieldset{border:0;padding:0;margin:0}.check{display:flex;gap:8px;align-items:center;margin:0 0 8px;font-size:14px}.check input{margin:0}.check.is-locked{opacity:.55}.check .reason{color:#6F6457;font-size:12px}button{width:100%;padding:12px;border:0;border-radius:10px;background:#241B14;color:#fff;font-size:15px;cursor:pointer;margin-top:22px}.note{font-size:13px;margin:14px 0 0}.err{color:#A3341F;font-size:14px;margin:0 0 14px}.colorrow{display:flex;gap:8px;align-items:center;margin:0 0 12px}.swatch{width:16px;height:16px;border-radius:4px;flex:none;border:1px solid rgba(0,0,0,.15)}.cinfo{flex:1;font-size:13px;color:#6F6457}.colorrow select{width:auto;margin:0;flex:none}details.more summary{font-size:13px;color:#6F6457;cursor:pointer;margin:0 0 10px}'
+    ? '.card{max-width:560px;text-align:left}h2{font-size:15px;margin:26px 0 10px}label{display:block;font-size:14px;margin:0 0 6px;color:#241B14}select{width:100%;padding:9px 10px;border:1px solid #E2D8CB;border-radius:8px;background:#fff;font-size:14px;margin:0 0 14px}fieldset{border:0;padding:0;margin:0}.check{display:flex;gap:8px;align-items:center;margin:0 0 8px;font-size:14px}.check input{margin:0}.check.is-locked{opacity:.55}.check .reason{color:#6F6457;font-size:12px}button{width:100%;padding:12px;border:0;border-radius:10px;background:#241B14;color:#fff;font-size:15px;cursor:pointer;margin-top:22px}.note{font-size:13px;margin:14px 0 0}.err{color:#A3341F;font-size:14px;margin:0 0 14px}.colorrow{display:flex;gap:8px;align-items:center;margin:0 0 12px}.swatch{width:16px;height:16px;border-radius:4px;flex:none;border:1px solid rgba(0,0,0,.15)}.cinfo{flex:1;font-size:13px;color:#6F6457}.colorrow select{width:auto;margin:0;flex:none}details.more{margin-top:22px}details.more summary{font-size:13px;color:#6F6457;cursor:pointer;margin:0 0 10px}'
     : '';
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Marisol · Calendar</title><style>body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#FBF6EF;color:#241B14;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}.card{background:#fff;border-radius:16px;padding:32px 28px;max-width:440px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.06)}h1{font-size:20px;margin:0 0 10px}p{color:#6F6457;line-height:1.55;margin:0}${formStyles}</style></head><body><div class="card">${body}</div></body></html>`;
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Marisol · Calendar</title><style>*{box-sizing:border-box}[hidden]{display:none!important}body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#FBF6EF;color:#241B14;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;padding:24px}.card{width:100%;background:#fff;border-radius:16px;padding:32px 28px;max-width:440px;text-align:center;box-shadow:0 8px 40px rgba(0,0,0,.06)}h1{font-size:20px;margin:0 0 10px}p{color:#6F6457;line-height:1.55;margin:0}${formStyles}</style></head><body><div class="card">${body}</div></body></html>`;
 }
 
 function esc(value: string): string {
@@ -254,7 +254,7 @@ function colorRow(
   const meta = COLOR_BY_ID.get(colorId) ?? { name: `Colour ${colorId}`, hex: '#ccc' };
   // A mapping the client already saved wins over the hint — they chose it on purpose.
   const savedStaff = routing.attribution.colors?.[colorId];
-  const selected = savedStaff ?? usage?.hintStaffId;
+  const selected = savedStaff;
   const options = staff
     .map(
       (m) =>
@@ -266,7 +266,7 @@ function colorRow(
     !savedStaff && usage?.hintStaffId && usage.hintTitle
       ? ` · suggested from “${esc(truncate(usage.hintTitle))}”`
       : '';
-  return `<div class="colorrow"><span class="swatch" style="background:${meta.hex}"></span><span class="cinfo">${esc(meta.name)}${count}${provenance}</span><select aria-label="Who uses ${esc(meta.name)}?" name="colorstaff_${esc(colorId)}"><option value=""${selected ? '' : ' selected'}>Nobody</option>${options}</select></div>`;
+  return `<div class="colorrow"><span class="swatch" style="background:${meta.hex}"></span><span class="cinfo">${esc(meta.name)}${count}${provenance}</span><select aria-label="Who uses ${esc(meta.name)}?" name="colorstaff_${esc(colorId)}"><option value=""${selected ? '' : ' selected'}>Blocks everyone</option>${options}</select></div>`;
 }
 
 // Every colour keeps a field, always: the form is the whole payload on save, so rendering only
@@ -323,13 +323,14 @@ export function selectForm(input: {
   const writeSelected = writable.some((cal) => cal.id === routing.write_calendar_id)
     ? routing.write_calendar_id
     : (writable.find((cal) => cal.primary)?.id ?? writable[0]?.id);
+  const showStaff = staff.length > 1 || Object.keys(routing.staff_calendars).length > 0;
   const staffRows = staff
     .map(
       (m) =>
         `<label for="staff_${esc(m.id)}">${esc(m.name)}</label><select class="js-staff" data-staff-name="${esc(m.name)}" id="staff_${esc(m.id)}" name="staff_${esc(m.id)}">${calendarOptions(
           writable,
           routing.staff_calendars[m.id],
-          'Main calendar',
+          'Use the shared booking calendar',
         )}</select>`,
     )
     .join('');
@@ -358,40 +359,39 @@ export function selectForm(input: {
   const mode = routing.attribution.mode;
   const colorRows = colorMapMarkup(staff, routing, colorUsage);
 
-  return `<h1>Choose your calendars</h1>
-${input.error ? `<p class="err">${esc(input.error)}</p>` : ''}
+  return `<h1>Where should Marisol save appointments?</h1>
+<p>Choose the calendar you use for this business. Existing busy events will be checked before a time is offered.</p>
+${input.error ? `<p role="alert" class="err">${esc(input.error)}</p>` : ''}
 <form method="post" action="/integrations/google/select">
 <input type="hidden" name="shop_id" value="${esc(shopId)}">
 <input type="hidden" name="sig" value="${esc(sig)}">
-<h2>Where should bookings be saved?</h2>
-<label for="write_calendar">Main calendar</label>
+<h2>${showStaff ? 'Shared booking calendar' : 'Your appointment calendar'}</h2>
+<label for="write_calendar">${showStaff ? 'Used by anyone without their own calendar below' : 'New appointments are saved here'}</label>
 <select id="write_calendar" name="write_calendar">${calendarOptions(writable, writeSelected)}</select>
-<details class="more"><summary>More options</summary>
-${staff.length > 0 ? `<h2>Calendar per staff member</h2><p class="note">Optional — leave on “Main calendar” if everyone shares one.</p>${staffRows}` : ''}
-<h2>Also check these for busy times</h2>
-<p class="note">We only read these — nothing is ever written there. Pick up to ${MAX_BUSY_CALENDARS}.</p>
+${showStaff ? `<h2>Your team’s calendars</h2><p class="note">Choose each person’s calendar if they take appointments at the same time. Busy events in a person’s own calendar block that person.</p>${staffRows}<p class="note">Sharing one calendar? Entries without a verified person assignment block the whole team. Ask us to check your shared calendar before activation.</p>` : '<p class="note">Events marked Busy block your availability. Events marked Free do not. An all-day Busy event blocks the whole day.</p>'}
+<details class="more"${routing.busy_calendar_ids.length ? ' open' : ''}>
+<summary>Also check other calendars for busy times</summary>
+<p class="note">Optional. These calendars are only read. ${showStaff ? 'Their events block the whole team, so use them for shared closures, not one person’s private appointments.' : 'Use this if you keep time off or other commitments in another calendar.'} Pick up to ${MAX_BUSY_CALENDARS}.</p>
 <fieldset>${busyRows}</fieldset>
-${
-  staff.length > 0
-    ? `<h2>Appointments you enter yourself</h2>
-<p class="note">If we can tell who an entry belongs to, it only blocks that person. Otherwise it blocks everyone — the safe default.</p>
-<fieldset>
-<div class="check"><input type="radio" id="attr_off" name="attribution_mode" value="off"${mode === 'off' ? ' checked' : ''}><label for="attr_off">Blocks everyone (default)</label></div>
-<div class="check"><input type="radio" id="attr_color" name="attribution_mode" value="color"${mode === 'color' ? ' checked' : ''}><label for="attr_color">I colour-code entries by person</label></div>
-<div class="check"><input type="radio" id="attr_title" name="attribution_mode" value="title_prefix"${mode === 'title_prefix' ? ' checked' : ''}><label for="attr_title">I start the title with the person's name (“Ana — haircut”)</label></div>
-</fieldset>
-<div id="color-map"${mode === 'color' ? '' : ' hidden'}><p class="note">If you colour-code, tell us whose colour is whose:</p>
-${colorRows}</div>`
-    : ''
-}
 </details>
-<p class="note">Your staff will see these appointments only if you've shared that calendar with them in Google Calendar. Bookings are always saved here for you either way.</p>
-<button type="submit">Save and finish</button>
-</form>${BUSY_SYNC_SCRIPT}<script>
-(function(){const map=document.getElementById('color-map');if(!map)return;
-function sync(){map.hidden=!document.getElementById('attr_color').checked;}
-document.querySelectorAll('input[name="attribution_mode"]').forEach(function(input){input.addEventListener('change',sync);});sync();})();
-</script>`;
+${
+  staff.length > 1 || mode !== 'off'
+    ? `<details class="more"${mode !== 'off' ? ' open' : ''}>
+<summary>Advanced: appointments in a shared calendar</summary>
+<p class="note">Only change this if your existing appointments consistently identify a person. We recommend checking these rules with our team.</p>
+<fieldset>
+<div class="check"><input type="radio" id="attr_off" name="attribution_mode" value="off"${mode === 'off' ? ' checked' : ''}><label for="attr_off">Unassigned events block everyone</label></div>
+<div class="check"><input type="radio" id="attr_color" name="attribution_mode" value="color"${mode === 'color' ? ' checked' : ''}><label for="attr_color">Each person has an event color</label></div>
+<div class="check"><input type="radio" id="attr_title" name="attribution_mode" value="title_prefix"${mode === 'title_prefix' ? ' checked' : ''}><label for="attr_title">Event titles start with a person’s name (“Ana — haircut”)</label></div>
+</fieldset>
+<div id="color_mapping"${mode !== 'color' ? ' hidden' : ''}><p class="note">Confirm each assignment. Unassigned colors block everyone.</p>${colorRows}</div>
+<noscript><p>Enable JavaScript to edit color assignments, or ask our team for help.</p></noscript>
+</details>`
+    : '<input type="hidden" name="attribution_mode" value="off">'
+}
+<p class="note">Saving connects your calendar. Our team will still verify your appointment setup before activating a new receptionist.</p>
+<button type="submit">Save calendar setup</button>
+</form>${BUSY_SYNC_SCRIPT}<script>(function(){var box=document.getElementById('color_mapping');function update(){var selected=document.querySelector('input[name="attribution_mode"]:checked');if(box){box.hidden=!selected||selected.value!=='color';}}document.querySelectorAll('input[name="attribution_mode"]').forEach(function(r){r.addEventListener('change',update);});update();})();</script>`;
 }
 
 async function calendarContext(
@@ -503,8 +503,30 @@ googleIntegrationRoutes.post('/select', async (c) => {
   const current = resolveRouting(shop);
   const writableIds = new Set(calendars.filter(canWriteTo).map((cal) => cal.id));
   const knownIds = new Set(calendars.map((cal) => cal.id));
-  // Scanned only when we actually re-render: a successful save must not pay for a hint nobody sees.
-  const rerender = async (error: string) =>
+  const submitted: CalendarRouting = {
+    write_calendar_id:
+      typeof body.write_calendar === 'string' ? body.write_calendar : current.write_calendar_id,
+    staff_calendars: Object.fromEntries(
+      staff
+        .map((m) => [m.id, body[`staff_${m.id}`]])
+        .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1]),
+    ),
+    busy_calendar_ids: (Array.isArray(body.busy) ? body.busy : body.busy ? [body.busy] : []).filter(
+      (v): v is string => typeof v === 'string',
+    ),
+    attribution:
+      body.attribution_mode === 'color'
+        ? {
+            mode: 'color',
+            colors: Object.fromEntries(
+              GOOGLE_EVENT_COLORS.map(([id]) => [id, body[`colorstaff_${id}`]]).filter(
+                (entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1],
+              ),
+            ),
+          }
+        : { mode: body.attribution_mode === 'title_prefix' ? 'title_prefix' : 'off' },
+  };
+  const rerender = async (error: string, status: 400 | 500 = 400) =>
     c.html(
       page(
         selectForm({
@@ -512,20 +534,20 @@ googleIntegrationRoutes.post('/select', async (c) => {
           sig,
           calendars,
           staff,
-          routing: current,
-          colorUsage: await scanEventColors(ctx.token, current, staff),
+          routing: submitted,
+          colorUsage: undefined,
           error,
         }),
         true,
       ),
-      400,
+      status,
     );
 
   const writeCalendarId = typeof body.write_calendar === 'string' ? body.write_calendar : '';
   // A read-only calendar as the write target would fail silently: the booking and its SMS
   // still succeed (the event write runs in waitUntil) and the calendar stays empty.
   if (!writableIds.has(writeCalendarId)) {
-    return await rerender('Please pick a main calendar you can edit.');
+    return await rerender('Please pick a booking calendar you can edit.');
   }
 
   const staffCalendars: Record<string, string> = {};
@@ -580,10 +602,8 @@ googleIntegrationRoutes.post('/select', async (c) => {
     .eq('id', shopId);
   if (error) {
     console.error('[gcal-select] routing update failed:', error.message);
-    return c.html(
-      page(
-        "<h1>We couldn't save your choice</h1><p>Please try the link again, or reply to your welcome email and we'll finish it.</p>",
-      ),
+    return await rerender(
+      'We couldn’t save your choices. Your selections are still here. Please try again.',
       500,
     );
   }
@@ -610,7 +630,7 @@ googleIntegrationRoutes.post('/select', async (c) => {
 
   return c.html(
     page(
-      `<h1>✅ Calendar connected</h1><p>Marisol will now book appointments straight into your Google Calendar.</p>${portalReturnLink(c.env)}`,
+      `<h1>Calendar setup saved</h1><p>Your calendar is connected. If your receptionist is awaiting activation, our team will verify the setup with you first.</p>${portalReturnLink(c.env)}`,
     ),
     200,
   );

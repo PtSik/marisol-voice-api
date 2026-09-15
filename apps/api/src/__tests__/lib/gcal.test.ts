@@ -84,12 +84,16 @@ describe('getStaffBusy', () => {
     expect(await getStaffBusy(env, shop, 'a', 'b')).toEqual({ shared: [], perStaff: {} });
   });
 
-  it('fails open when credentials cannot be decrypted', async () => {
+  it('marks availability unknown when credentials cannot be decrypted', async () => {
     const shop = {
       integration: 'google_calendar',
       integration_credentials_encrypted: 'not-valid-creds',
     } as unknown as ShopRow;
-    expect(await getStaffBusy(env, shop, 'a', 'b')).toEqual({ shared: [], perStaff: {} });
+    expect(await getStaffBusy(env, shop, 'a', 'b')).toEqual({
+      shared: [],
+      perStaff: {},
+      unavailable: true,
+    });
   });
 
   async function connectedShop(routing: Partial<CalendarRouting>): Promise<ShopRow> {
@@ -156,6 +160,7 @@ describe('getStaffBusy', () => {
     const busy = await getStaffBusy(env, shop, 'a', 'b');
     expect(busy.shared.map((b) => b.id)).toEqual(['main1']);
     expect(busy.perStaff.stf_ana).toBeUndefined();
+    expect(busy.unavailable).toBe(true);
   });
 
   it('treats a staff calendar that is also the write calendar as shared', async () => {
@@ -164,6 +169,21 @@ describe('getStaffBusy', () => {
     const busy = await getStaffBusy(env, shop, 'a', 'b');
     expect(busy.shared.map((b) => b.id)).toEqual(['main1']);
     expect(busy.perStaff).toEqual({});
+  });
+
+  it('keeps the default write calendar per-person when every team member has a calendar', async () => {
+    const shop = await connectedShop({
+      staff_calendars: { stf_ana: 'c_main', stf_luis: 'c_luis' },
+    });
+    shop.staff_json = JSON.stringify([
+      { id: 'stf_ana', name: 'Ana' },
+      { id: 'stf_luis', name: 'Luis' },
+    ]);
+    mockCalendars({ c_main: [event('ana1', 9)], c_luis: [] });
+    const busy = await getStaffBusy(env, shop, 'a', 'b');
+    expect(busy.shared).toEqual([]);
+    expect(busy.perStaff.stf_ana?.map((b) => b.id)).toEqual(['ana1']);
+    expect(busy.perStaff.stf_luis).toEqual([]);
   });
 
   it('keeps a staff calendar per-person even when a legacy config also lists it as busy', async () => {
@@ -198,7 +218,7 @@ describe('getStaffBusy', () => {
     expect(busy.perStaff.stf_luis?.map((b) => b.id)).toEqual(['chair1']);
   });
 
-  it('fails open when the token exchange runs past the deadline', async () => {
+  it('marks availability unknown when the token exchange runs past the deadline', async () => {
     const shop = await connectedShop({});
     globalThis.fetch = ((_input: string | URL, init?: RequestInit) =>
       new Promise((_resolve, reject) => {
@@ -206,7 +226,7 @@ describe('getStaffBusy', () => {
       })) as unknown as typeof fetch;
     const started = Date.now();
     const busy = await getStaffBusy(env, shop, 'a', 'b', { timeoutMs: 60 });
-    expect(busy).toEqual({ shared: [], perStaff: {} });
+    expect(busy).toEqual({ shared: [], perStaff: {}, unavailable: true });
     expect(Date.now() - started).toBeLessThan(1000);
   });
 });

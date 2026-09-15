@@ -1,6 +1,7 @@
 import type { CalendarRouting, ShopRow, WorkerBindings } from '../types';
 import { logGcalFailure } from './calendar-alerts';
 import { decrypt } from './crypto';
+import { parseStaff } from './staff';
 
 interface GCalCreds {
   client_email: string;
@@ -443,6 +444,8 @@ export async function gcalListDeltas(
 }
 
 export interface StaffBusy {
+  // Any missing required read makes availability unknown, not free.
+  unavailable?: true;
   // Blocks the whole shop: the main calendar plus any calendar marked busy-only.
   shared: GCalBusy[];
   // Blocks one person, keyed by staff.id.
@@ -470,11 +473,8 @@ function deadline(timeoutMs: number): { signal: AbortSignal; clear: () => void }
   return { signal: controller.signal, clear: () => clearTimeout(timer) };
 }
 
-// Foreign-event busy for a shop's calendars, one events.list per calendar in parallel.
-// Fail-open at two levels: a calendar that errors or times out drops out of the result while
-// the rest stay (allSettled, not all — one slow staff calendar must not blind us to the main
-// one), and a failed token exchange yields empty busy so the agent keeps answering from
-// Supabase alone rather than going silent on the line.
+// Read calendars in parallel under one deadline. Keep successful data for diagnostics,
+// but flag any missing read so callers cannot offer or confirm unverified availability.
 export async function getStaffBusy(
   env: WorkerBindings,
   shop: ShopRow,
@@ -483,9 +483,8 @@ export async function getStaffBusy(
   options: BusyReadOptions = {},
 ): Promise<StaffBusy> {
   const encryptedCreds = shop.integration_credentials_encrypted;
-  if (shop.integration !== 'google_calendar' || !encryptedCreds) {
-    return EMPTY_BUSY;
-  }
+  if (shop.integration !== 'google_calendar') return EMPTY_BUSY;
+  if (!encryptedCreds) return { ...EMPTY_BUSY, unavailable: true };
   const budget = deadline(options.timeoutMs ?? 1500);
   try {
     return await readStaffBusy(
@@ -518,16 +517,15 @@ async function readStaffBusy(
     const gcal = await getGCalClient(env, encryptedCreds, signal);
     token = gcal.token;
   } catch (err) {
-    console.error('[gcal-busy] token fail-open:', err instanceof Error ? err.message : err);
+    console.error('[gcal-busy] token unavailable:', err instanceof Error ? err.message : err);
     reportFailure(env, shop, options, { op: 'token', message: errorMessage(err) });
-    return EMPTY_BUSY;
+    return { ...EMPTY_BUSY, unavailable: true };
   }
 
   // One request per distinct calendar: a calendar shared by two staff members is read once,
-  // and a staff calendar that is also the write calendar counts as shared for everybody.
+  // Explicit staff ownership also applies when that calendar is the default write target.
   const staffByCalendar = new Map<string, string[]>();
   for (const [staffId, calendarId] of Object.entries(routing.staff_calendars)) {
-    if (calendarId === routing.write_calendar_id) continue;
     staffByCalendar.set(calendarId, [...(staffByCalendar.get(calendarId) ?? []), staffId]);
   }
   // A staff calendar that also sits in busy_calendar_ids (a legacy mis-config the picker used
@@ -535,7 +533,11 @@ async function readStaffBusy(
   // person's appointments, the exact failure the picker now prevents.
   const staffCalendarIds = new Set(staffByCalendar.keys());
   const sharedIds = new Set([
-    routing.write_calendar_id,
+    ...(staffCalendarIds.has(routing.write_calendar_id) &&
+    parseStaff(shop.staff_json).length > 0 &&
+    parseStaff(shop.staff_json).every((m) => routing.staff_calendars[m.id])
+      ? []
+      : [routing.write_calendar_id]),
     ...routing.busy_calendar_ids.filter((id) => !staffCalendarIds.has(id)),
   ]);
   for (const id of sharedIds) staffByCalendar.delete(id);
@@ -554,7 +556,8 @@ async function readStaffBusy(
     const target = targets[i];
     if (!target) return;
     if (result.status === 'rejected') {
-      console.error(`[gcal-busy] ${target.calendarId} fail-open:`, errorMessage(result.reason));
+      busy.unavailable = true;
+      console.error(`[gcal-busy] ${target.calendarId} unavailable:`, errorMessage(result.reason));
       reportFailure(env, shop, options, {
         op: 'busy',
         calendar_id: target.calendarId,

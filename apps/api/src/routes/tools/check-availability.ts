@@ -154,7 +154,7 @@ export async function handleCheckAvailability(
   const dayStartUtc = new Date(`${date}T00:00:00Z`).getTime();
   const winStart = new Date(dayStartUtc - 24 * 60 * 60_000).toISOString();
   const winEnd = new Date(dayStartUtc + 48 * 60 * 60_000).toISOString();
-  const [{ data: booked }, gcalBusy] = await Promise.all([
+  const [{ data: booked, error: bookingReadError }, gcalBusy] = await Promise.all([
     db
       .from('bookings')
       .select('start_at, end_at, staff, gcal_event_id')
@@ -167,6 +167,13 @@ export async function handleCheckAvailability(
     }),
   ]);
 
+  if (bookingReadError || gcalBusy.unavailable) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result:
+        'I can’t verify the appointment calendar right now. Please try again shortly. Do not offer or confirm an appointment until availability can be checked.',
+    });
+  }
   const bookings = booked ?? [];
   // Our own bookings are mirrored into GCal (gcal_event_id); exclude them so a foreign event
   // (Booksy / manual) blocks all staff while our own only blocks the booked staff via conflicts().
