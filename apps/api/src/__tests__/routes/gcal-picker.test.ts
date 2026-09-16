@@ -64,7 +64,7 @@ describe('colorMapMarkup', () => {
 });
 
 describe('assisted calendar access', () => {
-  it('requires a grant for new connections and denies inactive shops even with an old grant', () => {
+  it('requires a grant and permits prepared suspended shops without opening cancelled shops', () => {
     expect(canConnectCalendar({ status: 'active', integration: 'none' } as ShopRow)).toBe(false);
     expect(
       canConnectCalendar({ status: 'active', calendar_access_granted_at: '2026-09-06' } as ShopRow),
@@ -72,7 +72,14 @@ describe('assisted calendar access', () => {
     expect(
       canConnectCalendar({ status: 'active', integration: 'google_calendar' } as ShopRow),
     ).toBe(true);
-    for (const status of ['cancelled', 'suspended', 'pending_review']) {
+    expect(
+      canConnectCalendar({
+        status: 'suspended',
+        calendar_access_granted_at: '2026-09-06',
+        integration: 'none',
+      } as ShopRow),
+    ).toBe(true);
+    for (const status of ['cancelled', 'pending_review']) {
       expect(
         canConnectCalendar({
           status,

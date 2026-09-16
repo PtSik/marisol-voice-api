@@ -3,6 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2024-09-23"
 workers_dev = true
 minify = true
+routes = [
+  { pattern = "api.callmarisol.com", custom_domain = true }
+]
 
 [observability]
 enabled = true

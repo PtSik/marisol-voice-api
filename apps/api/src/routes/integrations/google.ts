@@ -77,7 +77,7 @@ function esc(value: string): string {
 export function canConnectCalendar(shop: ShopRow | null): boolean {
   return Boolean(
     shop &&
-      canServeCalls(shop.status) &&
+      (canServeCalls(shop.status) || shop.status === 'suspended') &&
       (shop.calendar_access_granted_at || shop.integration === 'google_calendar'),
   );
 }
