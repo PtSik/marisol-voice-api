@@ -51,7 +51,7 @@ export async function handleEscalate(
   if (escalation_type === 'callback') {
     // During assisted launch there is no callback consumer other than this SMS alert. With SMS
     // disabled, recording a row and promising a callback would silently strand the caller.
-    if (c.env.SMS_ENABLED !== 'true') {
+    if (c.env.SMS_ENABLED !== 'true' || shop.sms_enabled !== true) {
       return c.json<ElevenLabsToolWebhookResponse>({
         result: `Callback requests aren't available right now. I can transfer you to ${shop.name} instead if you'd like.`,
         success: true,
@@ -90,9 +90,10 @@ export async function handleEscalate(
 
     const notified = await sendSms(
       c.env,
-      shop.twilio_number,
+      shop,
       normalizedOwner,
       `${shop.name}: New callback request from ${normalizedPhone || 'unknown number'}. Reason: ${reason ?? 'n/a'}`,
+      { requireConsent: false },
     );
     if (!notified) {
       // This SMS is the table's only consumer during assisted launch, so a row nobody will read

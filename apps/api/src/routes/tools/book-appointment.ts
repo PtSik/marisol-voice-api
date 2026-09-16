@@ -66,6 +66,7 @@ export async function handleBookAppointment(
     });
   const duration_minutes = configuredDuration ?? requestedDuration;
   const language = normalizeSmsLanguage(params.language);
+  const smsConsentAt = params.sms_consent === true ? new Date().toISOString() : null;
 
   // Staff and opening-hours checks run before the web-demo short circuit below: both are pure
   // functions over the shop row we already hold, so the demo gets the same "no, we're closed
@@ -167,6 +168,7 @@ export async function handleBookAppointment(
       idempotency_key:
         conversationId && !conversationId.includes('{{') ? `${conversationId}:${start_time}` : null,
       status: 'confirmed',
+      sms_consent_at: smsConsentAt,
       // Set before the calendar write, cleared on its success — a swallowed failure or a
       // killed isolate leaves it up for the repair cron to finish the job.
       gcal_sync_pending:
@@ -240,7 +242,7 @@ export async function handleBookAppointment(
   const spokenLabel = spokenDateTimeLabel(startMs, shop.timezone);
   const smsSent = await sendSms(
     c.env,
-    shop.twilio_number,
+    shop,
     normalizedPhone,
     bookingConfirmationSms(language, {
       shopName: shop.name,
@@ -248,6 +250,7 @@ export async function handleBookAppointment(
       staff: member?.name ?? staff_name,
       code,
     }),
+    { consentAt: smsConsentAt },
   );
 
   const result = smsSent

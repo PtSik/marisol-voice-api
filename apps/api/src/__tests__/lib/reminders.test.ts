@@ -8,16 +8,19 @@ import {
 import type { WorkerBindings } from '../../types';
 
 const shop = {
+  id: 'shop-1',
   name: 'Barbarossa Barbershop',
   timezone: 'America/New_York',
   twilio_number: '+18336596941',
   reminders_enabled: true,
+  sms_enabled: true,
   status: 'active',
 };
 
 const booking: DueBooking = {
   id: 'b1',
   customer_phone: '+15551234567',
+  sms_consent_at: '2026-07-01T00:00:00.000Z',
   staff: 'Joe',
   service: 'Haircut',
   start_at: new Date(Date.UTC(2026, 6, 9, 18, 30)).toISOString(),
@@ -57,6 +60,12 @@ describe('composeReminder', () => {
     expect(
       composeReminder({ ...booking, shops: { ...shop, reminders_enabled: false } }),
     ).toBeNull();
+  });
+  it('returns null when the shop has not been approved for SMS', () => {
+    expect(composeReminder({ ...booking, shops: { ...shop, sms_enabled: false } })).toBeNull();
+  });
+  it('returns null when the caller did not consent to texts', () => {
+    expect(composeReminder({ ...booking, sms_consent_at: null })).toBeNull();
   });
   it('returns null when the shop join is missing', () => {
     expect(composeReminder({ ...booking, shops: null })).toBeNull();

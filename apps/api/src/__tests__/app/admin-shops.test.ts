@@ -107,6 +107,12 @@ describe('buildShopUpdate', () => {
     expect('error' in buildShopUpdate({ reminders_enabled: 'yes' })).toBe(true);
   });
 
+  it('accepts only boolean per-shop SMS approval', () => {
+    expect(buildShopUpdate({ sms_enabled: true })).toEqual({ update: { sms_enabled: true } });
+    expect(buildShopUpdate({ sms_enabled: false })).toEqual({ update: { sms_enabled: false } });
+    expect('error' in buildShopUpdate({ sms_enabled: 'yes' })).toBe(true);
+  });
+
   it('canonicalises calendar_routing and keeps it an object for the jsonb column', () => {
     const built = buildShopUpdate({
       calendar_routing: {

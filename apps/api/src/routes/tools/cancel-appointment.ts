@@ -36,7 +36,7 @@ export async function handleCancelAppointment(
   const { data: booking } = await db
     .from('bookings')
     .select(
-      'id, shop_id, customer_phone, staff, start_at, status, gcal_event_id, gcal_calendar_id, language',
+      'id, shop_id, customer_phone, staff, start_at, status, gcal_event_id, gcal_calendar_id, language, sms_consent_at',
     )
     .eq('id', booking_id)
     .single();
@@ -104,13 +104,14 @@ export async function handleCancelAppointment(
   const spokenLabel = spokenDateTimeLabel(new Date(booking.start_at).getTime(), shop.timezone);
   const smsSent = await sendSms(
     c.env,
-    shop.twilio_number,
+    shop,
     booking.customer_phone,
     cancellationSms(language, {
       shopName: shop.name,
       whenLabel: smsLabel,
       staff: booking.staff,
     }),
+    { consentAt: booking.sms_consent_at },
   );
 
   return c.json<ElevenLabsToolWebhookResponse>({

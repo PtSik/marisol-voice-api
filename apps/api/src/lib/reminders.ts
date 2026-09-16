@@ -20,22 +20,31 @@ export function reminderWindow(nowMs: number): { from: string; to: string } {
 export interface DueBooking {
   id: string;
   customer_phone: string;
+  sms_consent_at: string | null;
   staff: string;
   service: string | null;
   start_at: string;
   language: string;
   shops: {
+    id: string;
     name: string;
     timezone: string;
     twilio_number: string;
     reminders_enabled: boolean;
+    sms_enabled: boolean;
     status: string;
   } | null;
 }
 
 export function composeReminder(booking: DueBooking): string | null {
   const shop = booking.shops;
-  if (!shop?.reminders_enabled || !canServeCalls(shop.status)) return null;
+  if (
+    !shop?.reminders_enabled ||
+    !shop.sms_enabled ||
+    !booking.sms_consent_at ||
+    !canServeCalls(shop.status)
+  )
+    return null;
   const lang = normalizeSmsLanguage(booking.language);
   const whenLabel = smsWhenLabel(new Date(booking.start_at).getTime(), shop.timezone, lang);
   return reminderSms(lang, { shopName: shop.name, whenLabel, staff: booking.staff });
@@ -56,7 +65,7 @@ export async function runReminders(
   const { data, error } = await db
     .from('bookings')
     .select(
-      'id, customer_phone, staff, service, start_at, language, shops(name, timezone, twilio_number, reminders_enabled, status)',
+      'id, customer_phone, staff, service, start_at, language, sms_consent_at, shops(id, name, timezone, twilio_number, reminders_enabled, sms_enabled, status)',
     )
     .eq('status', 'confirmed')
     .is('reminder_sent_at', null)
@@ -87,7 +96,9 @@ export async function runReminders(
       skipped++;
       continue;
     }
-    const ok = await sendSms(env, booking.shops.twilio_number, booking.customer_phone, body);
+    const ok = await sendSms(env, booking.shops, booking.customer_phone, body, {
+      consentAt: booking.sms_consent_at,
+    });
     if (ok) {
       sent++;
     } else {

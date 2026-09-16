@@ -3,46 +3,15 @@ import { registerCall } from '../../lib/elevenlabs';
 import { toE164 } from '../../lib/normalize';
 import { canServeCalls } from '../../lib/shop-status';
 import { getSupabase } from '../../lib/supabase';
+import { readSignedTwilioForm } from '../../lib/twilio-signature';
 import type { WorkerBindings } from '../../types';
 import { buildPersonalizationData } from '../webhooks/personalization';
-
-async function validateTwilioSignature(
-  authToken: string,
-  url: string,
-  params: Record<string, string>,
-  signature: string,
-): Promise<boolean> {
-  // Twilio signs: URL + sorted param key+value pairs, HMAC-SHA1, base64
-  const sortedKeys = Object.keys(params).sort();
-  const message = url + sortedKeys.map((k) => `${k}${params[k] ?? ''}`).join('');
-
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey(
-    'raw',
-    enc.encode(authToken),
-    { name: 'HMAC', hash: 'SHA-1' },
-    false,
-    ['sign'],
-  );
-  const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-  const expected = btoa(String.fromCharCode(...new Uint8Array(sig)));
-  return signature === expected;
-}
 
 export async function handleTwilioInbound(
   c: Context<{ Bindings: WorkerBindings }>,
 ): Promise<Response> {
-  const twilioSig = c.req.header('X-Twilio-Signature') ?? '';
-  const formData = await c.req.formData();
-  const params: Record<string, string> = {};
-  formData.forEach((value, key) => {
-    if (typeof value === 'string') params[key] = value;
-  });
-
-  const url = c.req.url;
-  const valid = await validateTwilioSignature(c.env.TWILIO_AUTH_TOKEN, url, params, twilioSig);
-
-  if (!valid) {
+  const params = await readSignedTwilioForm(c.req.raw, c.env.TWILIO_AUTH_TOKEN);
+  if (!params) {
     return c.text('Forbidden', 403);
   }
 
@@ -82,7 +51,7 @@ export async function handleTwilioInbound(
     );
   }
 
-  const clientData = buildPersonalizationData(shop, fromNumber);
+  const clientData = buildPersonalizationData(shop, fromNumber, c.env.SMS_ENABLED === 'true');
 
   const result = await registerCall(
     c.env,

@@ -54,7 +54,7 @@ export async function handleRescheduleAppointment(
   const { data: booking } = await db
     .from('bookings')
     .select(
-      'id, shop_id, customer_phone, staff, service, start_at, end_at, gcal_event_id, gcal_calendar_id, status, language',
+      'id, shop_id, customer_phone, staff, service, start_at, end_at, gcal_event_id, gcal_calendar_id, status, language, sms_consent_at',
     )
     .eq('id', booking_id)
     .single();
@@ -243,7 +243,7 @@ export async function handleRescheduleAppointment(
   const spokenLabel = spokenDateTimeLabel(new Date(new_start_time).getTime(), shop.timezone);
   const smsSent = await sendSms(
     c.env,
-    shop.twilio_number,
+    shop,
     booking.customer_phone,
     rescheduleConfirmationSms(language, {
       shopName: shop.name,
@@ -251,6 +251,7 @@ export async function handleRescheduleAppointment(
       staff,
       code: newCode,
     }),
+    { consentAt: booking.sms_consent_at },
   );
 
   const result = smsSent

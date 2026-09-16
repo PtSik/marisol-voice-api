@@ -21,6 +21,7 @@ export interface ConversationDynamicVariables {
   shop_timezone: string;
   shop_local_date: string;
   shop_local_datetime: string;
+  sms_available: string;
 }
 
 export interface ConversationInitiationClientData {
@@ -80,6 +81,7 @@ export interface BookAppointmentParams {
   service?: string;
   notes?: string;
   language?: 'en' | 'es';
+  sms_consent?: boolean;
 }
 
 export interface BookAppointmentResult {
@@ -231,6 +233,7 @@ export interface ShopRow {
   // `handleEscalate`. Optional so a row selected before migration 0014 still types.
   is_demo?: boolean;
   reminders_enabled: boolean;
+  sms_enabled?: boolean;
   calendar_access_granted_at?: string | null;
   status: string;
   trial_ends_at: string | null;
@@ -258,6 +261,7 @@ export interface BookingRow {
   confirmation_code: string | null;
   language: string;
   reminder_sent_at: string | null;
+  sms_consent_at: string | null;
   created_at: string;
   updated_at: string;
 }

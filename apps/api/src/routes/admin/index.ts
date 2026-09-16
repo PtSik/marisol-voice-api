@@ -29,6 +29,7 @@ const MUTABLE_FIELDS = new Set([
   'service_catalog',
   'transfers_enabled',
   'reminders_enabled',
+  'sms_enabled',
   'staff_json',
   'address',
   'notes',
@@ -303,6 +304,8 @@ adminRoutes.post('/shops', async (c) => {
     return c.json({ error: 'Invalid service catalog' }, 400);
   if (body.transfers_enabled !== undefined && typeof body.transfers_enabled !== 'boolean')
     return c.json({ error: 'Invalid transfer setting' }, 400);
+  if (body.sms_enabled !== undefined && typeof body.sms_enabled !== 'boolean')
+    return c.json({ error: 'Invalid SMS setting' }, 400);
   // Provisioning creates shops through here, so canonicalise staff on the way in — a shop
   // must have stable staff ids from its first second.
   if (body.staff_json !== undefined) {
@@ -362,8 +365,8 @@ export function buildShopUpdate(
     } else if (key === 'transfers_enabled') {
       if (typeof value !== 'boolean') return { error: 'transfers_enabled must be a boolean' };
       update[key] = value;
-    } else if (key === 'reminders_enabled') {
-      if (typeof value !== 'boolean') return { error: 'reminders_enabled must be a boolean' };
+    } else if (key === 'reminders_enabled' || key === 'sms_enabled') {
+      if (typeof value !== 'boolean') return { error: `${key} must be a boolean` };
       update[key] = value;
     } else if (key === 'primary_language') {
       if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };

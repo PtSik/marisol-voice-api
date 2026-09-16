@@ -14,6 +14,7 @@ import type {
 export function buildPersonalizationData(
   shop: ShopRow,
   callerPhone: string,
+  smsGloballyEnabled = false,
 ): ConversationInitiationClientData {
   const now = new Date();
   const dynamicVars: ConversationDynamicVariables = {
@@ -49,6 +50,7 @@ export function buildPersonalizationData(
       hour: 'numeric',
       minute: '2-digit',
     }),
+    sms_available: smsGloballyEnabled && shop.sms_enabled === true ? 'true' : 'false',
   };
 
   // Only the opening language is overridden. The agent's own `language_presets` supply the
@@ -148,6 +150,6 @@ export async function handlePersonalization(
     return c.json({ error: 'Shop not found for this number' }, 404);
   }
 
-  const responseData = buildPersonalizationData(shop, callerPhone);
+  const responseData = buildPersonalizationData(shop, callerPhone, c.env.SMS_ENABLED === 'true');
   return c.json(responseData);
 }
