@@ -28,6 +28,7 @@ const MUTABLE_FIELDS = new Set([
   'services_json',
   'service_catalog',
   'transfers_enabled',
+  'reminders_enabled',
   'staff_json',
   'address',
   'notes',
@@ -258,6 +259,27 @@ adminRoutes.get('/shops/:id/calendar-check', async (c) => {
   }
 });
 
+adminRoutes.get('/shops/:id/activity-summary', async (c) => {
+  const shopId = c.req.param('id');
+  const since = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const db = getSupabase(c.env);
+  const [calls, bookings] = await Promise.all([
+    db
+      .from('calls')
+      .select('id', { count: 'exact', head: true })
+      .eq('shop_id', shopId)
+      .gte('created_at', since),
+    db
+      .from('bookings')
+      .select('id', { count: 'exact', head: true })
+      .eq('shop_id', shopId)
+      .eq('status', 'confirmed')
+      .gte('created_at', since),
+  ]);
+  if (calls.error || bookings.error) return c.json({ error: 'Activity unavailable' }, 503);
+  return c.json({ calls_30d: calls.count ?? 0, bookings_30d: bookings.count ?? 0 });
+});
+
 adminRoutes.post('/shops', async (c) => {
   let body: Record<string, unknown>;
   try {
@@ -339,6 +361,9 @@ export function buildShopUpdate(
       update[key] = value;
     } else if (key === 'transfers_enabled') {
       if (typeof value !== 'boolean') return { error: 'transfers_enabled must be a boolean' };
+      update[key] = value;
+    } else if (key === 'reminders_enabled') {
+      if (typeof value !== 'boolean') return { error: 'reminders_enabled must be a boolean' };
       update[key] = value;
     } else if (key === 'primary_language') {
       if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };

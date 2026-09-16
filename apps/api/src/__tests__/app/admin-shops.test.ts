@@ -97,6 +97,16 @@ describe('PATCH /admin/shops/:id', () => {
 });
 
 describe('buildShopUpdate', () => {
+  it('accepts only boolean reminder settings', () => {
+    expect(buildShopUpdate({ reminders_enabled: true })).toEqual({
+      update: { reminders_enabled: true },
+    });
+    expect(buildShopUpdate({ reminders_enabled: false })).toEqual({
+      update: { reminders_enabled: false },
+    });
+    expect('error' in buildShopUpdate({ reminders_enabled: 'yes' })).toBe(true);
+  });
+
   it('canonicalises calendar_routing and keeps it an object for the jsonb column', () => {
     const built = buildShopUpdate({
       calendar_routing: {
