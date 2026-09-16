@@ -82,11 +82,11 @@ export function canConnectCalendar(shop: ShopRow | null): boolean {
   );
 }
 
-export function portalReturnLink(env: WorkerBindings): string {
+export function portalReturnUrl(env: WorkerBindings): string {
   try {
     const url = new URL(env.PORTAL_URL ?? '');
     if (url.protocol !== 'https:') return '';
-    return `<p style="margin-top:20px"><a href="${esc(url.toString())}">Return to your dashboard</a></p>`;
+    return url.toString();
   } catch {
     return '';
   }
@@ -628,9 +628,11 @@ googleIntegrationRoutes.post('/select', async (c) => {
     );
   }
 
+  const returnUrl = portalReturnUrl(c.env);
+  if (returnUrl) return c.redirect(returnUrl, 303);
   return c.html(
     page(
-      `<h1>Calendar setup saved</h1><p>Your calendar is connected. If your receptionist is awaiting activation, our team will verify the setup with you first.</p>${portalReturnLink(c.env)}`,
+      '<h1>Calendar setup saved</h1><p>Your calendar is connected. You can close this page and return to Marisol.</p>',
     ),
     200,
   );

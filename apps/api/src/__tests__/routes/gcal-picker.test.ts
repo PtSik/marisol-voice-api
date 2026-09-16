@@ -3,7 +3,7 @@ import { parseStaff } from '../../lib/staff';
 import {
   canConnectCalendar,
   colorMapMarkup,
-  portalReturnLink,
+  portalReturnUrl,
   selectForm,
 } from '../../routes/integrations/google';
 import type { CalendarRouting, ShopRow, WorkerBindings } from '../../types';
@@ -89,14 +89,14 @@ describe('assisted calendar access', () => {
       ).toBe(false);
     }
   });
-  it('only renders a configured HTTPS return link', () => {
+  it('only redirects to a configured HTTPS portal URL', () => {
     expect(
-      portalReturnLink({
+      portalReturnUrl({
         PORTAL_URL: 'https://app.callmarisol.com/portal/calendar',
       } as WorkerBindings),
-    ).toContain('Return to your dashboard');
-    expect(portalReturnLink({ PORTAL_URL: 'javascript:alert(1)' } as WorkerBindings)).toBe('');
-    expect(portalReturnLink({} as WorkerBindings)).toBe('');
+    ).toBe('https://app.callmarisol.com/portal/calendar');
+    expect(portalReturnUrl({ PORTAL_URL: 'javascript:alert(1)' } as WorkerBindings)).toBe('');
+    expect(portalReturnUrl({} as WorkerBindings)).toBe('');
   });
   it('keeps advanced mappings in the form while hiding them until requested', () => {
     const input = {
