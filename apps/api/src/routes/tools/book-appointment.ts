@@ -48,6 +48,16 @@ export async function handleBookAppointment(
     c.req.header('X-Conversation-Id') ??
     ('conversation_id' in raw ? raw.conversation_id : '') ??
     '';
+  if (
+    shop.integration === 'google_calendar' &&
+    (!shop.integration_credentials_encrypted || !shop.calendar_routing?.write_calendar_id)
+  ) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result:
+        'Google Calendar still needs to be connected. Please finish calendar setup in the Marisol portal before booking an appointment.',
+    });
+  }
   const {
     staff_name,
     start_time,

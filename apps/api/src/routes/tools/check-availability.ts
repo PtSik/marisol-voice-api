@@ -123,6 +123,17 @@ export async function handleCheckAvailability(
   const params = ('parameters' in raw ? raw.parameters : raw) as CheckAvailabilityParams;
   const { date, duration_minutes = 30, staff } = params;
 
+  if (
+    shop.integration === 'google_calendar' &&
+    (!shop.integration_credentials_encrypted || !shop.calendar_routing?.write_calendar_id)
+  ) {
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result:
+        'Google Calendar still needs to be connected. Please finish calendar setup in the Marisol portal before booking an appointment.',
+    });
+  }
+
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: 'Invalid date format. Use YYYY-MM-DD.',
