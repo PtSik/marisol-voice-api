@@ -9,8 +9,6 @@ dist/
 # Research notes — ephemeral, not maintained docs
 docs/research/
 
-CLAUDE.md
-
 # Design specs — local only, never committed
 docs/specs/
 
