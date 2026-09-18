@@ -15,4 +15,6 @@ docs/specs/
 # The landing app is its own repo, checked out inside this tree — never commit it here.
 kaijiro-voice-landing/
 kaijiro_voice_landing/
+# Playwright MCP scratch output — snapshots and screenshots taken while working.
+.playwright-mcp/
 .DS_Store

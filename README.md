@@ -24,7 +24,7 @@ This repo is the **voice worker** plus its Supabase schema.
 
 Diagrams (Mermaid) live in [`docs/diagrams/`](./docs/diagrams/). For how the two repos fit
 together technically — workers, bindings, datastores, third parties — read
-[`docs/diagrams/system.mmd`](./docs/diagrams/system.mmd) first;
+[`docs/diagrams/system.md`](./docs/diagrams/system.md) first;
 [`docs/diagrams/README.md`](./docs/diagrams/README.md) indexes the rest.
 
 ## Structure
