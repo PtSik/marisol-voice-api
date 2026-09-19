@@ -12,6 +12,10 @@ docs/research/
 # Design specs — local only, never committed
 docs/specs/
 
+# Dated working docs — audits, plans and baselines. Handoff notes, not maintained specs.
+docs/*-2026-*.md
+!docs/call-flow-redesign-2026-08.md
+
 # The landing app is its own repo, checked out inside this tree — never commit it here.
 kaijiro-voice-landing/
 kaijiro_voice_landing/
