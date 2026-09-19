@@ -1,3 +1,4 @@
+import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ShopRow, WorkerBindings } from '../types';
 import { getSupabase } from './supabase';
 
@@ -12,6 +13,8 @@ export interface SmsOptions {
   // the subscribed business owner can opt out through the same recipient preference table.
   consentAt?: string | null;
   requireConsent?: boolean;
+  // The caller's existing client, so a tool request does not build a second one.
+  db?: SupabaseClient;
 }
 
 export async function sendSms(
@@ -35,7 +38,7 @@ export async function sendSms(
   }
 
   const from = env.TWILIO_SMS_FROM || shop.twilio_number;
-  const db = getSupabase(env);
+  const db = options.db ?? getSupabase(env);
   const { data: preference, error } = await db
     .from('sms_preferences')
     .select('status')

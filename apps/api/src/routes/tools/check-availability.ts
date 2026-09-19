@@ -1,6 +1,11 @@
 import type { Context } from 'hono';
 import { splitByAttribution } from '../../lib/attribution';
-import { getStaffBusy, resolveRouting } from '../../lib/gcal';
+import {
+  CALENDAR_SETUP_INCOMPLETE_RESULT,
+  calendarSetupIncomplete,
+  getStaffBusy,
+  resolveRouting,
+} from '../../lib/gcal';
 import {
   getHoursForDate,
   getStaffHoursForDate,
@@ -10,15 +15,14 @@ import {
   tzOffsetMinutes,
 } from '../../lib/hours';
 import { type StaffMember, normalizeStaffName, parseStaff } from '../../lib/staff';
-import { getSupabase } from '../../lib/supabase';
 import type {
   AvailableSlot,
   CheckAvailabilityParams,
-  ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
   ShopRow,
   WorkerBindings,
 } from '../../types';
+import type { ToolRequest } from './index';
 
 function conflicts(
   s1: number,
@@ -115,22 +119,14 @@ export function pickOffer(slots: AvailableSlot[]): AvailableSlot[] {
 
 export async function handleCheckAvailability(
   c: Context<{ Bindings: WorkerBindings }>,
-  shop: ShopRow,
+  { params, shop, db }: ToolRequest<CheckAvailabilityParams>,
 ): Promise<Response> {
-  const raw = await c.req.json<
-    CheckAvailabilityParams | ElevenLabsToolWebhookRequest<CheckAvailabilityParams>
-  >();
-  const params = ('parameters' in raw ? raw.parameters : raw) as CheckAvailabilityParams;
   const { date, duration_minutes = 30, staff } = params;
 
-  if (
-    shop.integration === 'google_calendar' &&
-    (!shop.integration_credentials_encrypted || !shop.calendar_routing?.write_calendar_id)
-  ) {
+  if (calendarSetupIncomplete(shop)) {
     return c.json<ElevenLabsToolWebhookResponse>({
       success: false,
-      result:
-        'Google Calendar still needs to be connected. Please finish calendar setup in the Marisol portal before booking an appointment.',
+      result: CALENDAR_SETUP_INCOMPLETE_RESULT,
     });
   }
 
@@ -158,7 +154,6 @@ export async function handleCheckAvailability(
     });
   }
 
-  const db = getSupabase(c.env);
   // Widen the query window by a day on each side: a slot local to `date` can fall on the
   // adjacent UTC date in extreme timezones. conflicts() filters by exact overlap, so
   // over-fetching is harmless.

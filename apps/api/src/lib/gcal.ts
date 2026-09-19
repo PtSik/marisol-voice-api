@@ -152,6 +152,18 @@ export function resolveRouting(shop: ShopRow): CalendarRouting {
 
 // Bookings land in the staff member's own calendar when the shop mapped one; everything
 // else — including a name we couldn't resolve — goes to the main calendar.
+// Booking and availability both refuse on this, with the same sentence: a shop that picked
+// Google Calendar but has not finished connecting it has nowhere to write the appointment.
+export const CALENDAR_SETUP_INCOMPLETE_RESULT =
+  'Google Calendar still needs to be connected. Please finish calendar setup in the Marisol portal before booking an appointment.';
+
+export function calendarSetupIncomplete(shop: ShopRow): boolean {
+  return (
+    shop.integration === 'google_calendar' &&
+    (!shop.integration_credentials_encrypted || !shop.calendar_routing?.write_calendar_id)
+  );
+}
+
 export function writeCalendarFor(shop: ShopRow, staffId?: string): string {
   const routing = resolveRouting(shop);
   return (staffId && routing.staff_calendars[staffId]) || routing.write_calendar_id;

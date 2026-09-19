@@ -46,3 +46,9 @@ export function reminderSms(lang: SmsLanguage, p: Omit<BookingSmsParts, 'code'>)
   }
   return `${p.shopName}: Reminder: your appointment is on ${p.whenLabel} with ${p.staff}. Need to change it? Just give us a call.`;
 }
+
+// Read digit by digit. "834192" comes out of a TTS engine as "eight hundred thirty-four…",
+// which the caller cannot write down.
+export function spokenCode(code: string): string {
+  return code.split('').join(' ');
+}

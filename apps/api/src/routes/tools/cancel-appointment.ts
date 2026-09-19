@@ -4,35 +4,27 @@ import { gcalDeleteEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
 import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { cancellationSms, normalizeSmsLanguage, smsWhenLabel } from '../../lib/sms-templates';
-import { getSupabase } from '../../lib/supabase';
 import { verifyCode } from '../../lib/verification';
 import type {
   CancelAppointmentParams,
-  ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
-  ShopRow,
   WorkerBindings,
 } from '../../types';
-import { hasPhoneContext } from './index';
+import type { ToolRequest } from './index';
 
 export async function handleCancelAppointment(
   c: Context<{ Bindings: WorkerBindings }>,
-  shop: ShopRow,
+  { params, shop, db, hasPhone }: ToolRequest<CancelAppointmentParams>,
 ): Promise<Response> {
-  const raw = await c.req.json<
-    CancelAppointmentParams | ElevenLabsToolWebhookRequest<CancelAppointmentParams>
-  >();
-  const params = ('parameters' in raw ? raw.parameters : raw) as CancelAppointmentParams;
   const { booking_id, code, reason } = params;
 
-  if (!hasPhoneContext(raw)) {
+  if (!hasPhone) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: "You're all set — in the real product I'd text your confirmation now.",
       success: true,
     });
   }
 
-  const db = getSupabase(c.env);
   const { data: booking } = await db
     .from('bookings')
     .select(
@@ -111,7 +103,7 @@ export async function handleCancelAppointment(
       whenLabel: smsLabel,
       staff: booking.staff,
     }),
-    { consentAt: booking.sms_consent_at },
+    { consentAt: booking.sms_consent_at, db },
   );
 
   return c.json<ElevenLabsToolWebhookResponse>({

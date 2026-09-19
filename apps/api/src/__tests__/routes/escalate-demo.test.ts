@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { Context } from 'hono';
 import { handleEscalate } from '../../routes/tools/escalate';
+import type { ToolRequest } from '../../routes/tools/index';
 import type { EscalateParams, ShopRow, WorkerBindings } from '../../types';
 
 const realShop = {
@@ -13,18 +14,14 @@ const realShop = {
 
 const demoShop = { ...realShop, id: 'shop-demo', is_demo: true } as unknown as ShopRow;
 
-// Supabase and SMS are reachable only past the demo guard, so a context that throws on `env` or
-// `executionCtx` is the assertion: if a demo call ever reaches the callback branch, the test fails
-// with that access rather than silently texting in production.
-function ctx(params: EscalateParams): Context<{ Bindings: WorkerBindings }> {
+// Supabase and SMS are reachable only past the demo guard, so a context that throws on `env`,
+// `executionCtx` or the request's `db` is the assertion: if a demo call ever reaches the callback
+// branch, the test fails with that access rather than silently texting in production.
+function ctx(): Context<{ Bindings: WorkerBindings }> {
   return {
-    req: {
-      json: async () => params,
-      header: () => 'conv_test',
-    },
     json: (body: unknown) => Response.json(body),
     get env(): never {
-      throw new Error('demo escalation reached Supabase — the guard did not hold');
+      throw new Error('demo escalation reached env — the guard did not hold');
     },
     get executionCtx(): never {
       throw new Error('demo escalation reached sendSms — the guard did not hold');
@@ -32,8 +29,21 @@ function ctx(params: EscalateParams): Context<{ Bindings: WorkerBindings }> {
   } as unknown as Context<{ Bindings: WorkerBindings }>;
 }
 
+function toolRequest(shop: ShopRow, params: EscalateParams): ToolRequest<EscalateParams> {
+  return {
+    raw: { ...params },
+    params,
+    shop,
+    hasPhone: true,
+    conversationId: 'conv_test',
+    get db(): never {
+      throw new Error('demo escalation reached Supabase — the guard did not hold');
+    },
+  } as unknown as ToolRequest<EscalateParams>;
+}
+
 async function escalate(shop: ShopRow, params: EscalateParams) {
-  const res = await handleEscalate(ctx(params), shop);
+  const res = await handleEscalate(ctx(), toolRequest(shop, params));
   return (await res.json()) as {
     result: string;
     success: boolean;
@@ -43,21 +53,28 @@ async function escalate(shop: ShopRow, params: EscalateParams) {
 
 async function callbackWhileSmsDisabled() {
   const context = {
-    req: {
-      json: async () => ({
-        escalation_type: 'callback',
-        customer_phone: '+13055559999',
-        reason: 'price question',
-      }),
-      header: () => 'conv_test',
-    },
     json: (body: unknown) => Response.json(body),
     env: { SMS_ENABLED: 'false' },
     get executionCtx(): never {
       throw new Error('disabled callback reached an async SMS send');
     },
   } as unknown as Context<{ Bindings: WorkerBindings }>;
-  const res = await handleEscalate(context, realShop);
+  const params: EscalateParams = {
+    escalation_type: 'callback',
+    customer_phone: '+13055559999',
+    reason: 'price question',
+  };
+  const res = await handleEscalate(context, {
+    raw: { ...params },
+    params,
+    shop: realShop,
+    hasPhone: true,
+    conversationId: 'conv_test',
+    // The SMS gate refuses before any insert, so touching the client is a failure.
+    get db(): never {
+      throw new Error('disabled callback reached Supabase');
+    },
+  } as unknown as ToolRequest<EscalateParams>);
   return (await res.json()) as {
     result: string;
     success: boolean;

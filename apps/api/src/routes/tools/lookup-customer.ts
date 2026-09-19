@@ -1,14 +1,12 @@
 import type { Context } from 'hono';
 import { localIso, localOffsetFor, spokenDateTimeLabel } from '../../lib/hours';
 import { tryToE164 } from '../../lib/normalize';
-import { getSupabase } from '../../lib/supabase';
 import type {
-  ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
   LookupCustomerParams,
-  ShopRow,
   WorkerBindings,
 } from '../../types';
+import type { ToolRequest } from './index';
 
 function mostCommon(arr: string[]): string | null {
   if (arr.length === 0) return null;
@@ -19,12 +17,8 @@ function mostCommon(arr: string[]): string | null {
 
 export async function handleLookupCustomer(
   c: Context<{ Bindings: WorkerBindings }>,
-  shop: ShopRow,
+  { params, shop, db }: ToolRequest<LookupCustomerParams>,
 ): Promise<Response> {
-  const raw = await c.req.json<
-    LookupCustomerParams | ElevenLabsToolWebhookRequest<LookupCustomerParams>
-  >();
-  const params = ('parameters' in raw ? raw.parameters : raw) as LookupCustomerParams;
   const { phone_number } = params;
 
   const normalized = tryToE164(phone_number);
@@ -35,7 +29,6 @@ export async function handleLookupCustomer(
     });
   }
 
-  const db = getSupabase(c.env);
   const { data: bookings } = await db
     .from('bookings')
     .select('id, start_at, end_at, service, staff, status, customer_name')

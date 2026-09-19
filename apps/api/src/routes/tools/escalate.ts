@@ -1,25 +1,16 @@
 import type { Context } from 'hono';
 import { tryToE164 } from '../../lib/normalize';
 import { sendSms } from '../../lib/sms';
-import { getSupabase } from '../../lib/supabase';
-import type {
-  ElevenLabsToolWebhookRequest,
-  ElevenLabsToolWebhookResponse,
-  EscalateParams,
-  ShopRow,
-  WorkerBindings,
-} from '../../types';
+import type { ElevenLabsToolWebhookResponse, EscalateParams, WorkerBindings } from '../../types';
+import type { ToolRequest } from './index';
 
+// `req` is not destructured: `db` must stay untouched until the callback branch, so the demo
+// and SMS guards above it can be asserted by a client that throws on access.
 export async function handleEscalate(
   c: Context<{ Bindings: WorkerBindings }>,
-  shop: ShopRow,
+  req: ToolRequest<EscalateParams>,
 ): Promise<Response> {
-  const raw = await c.req.json<EscalateParams | ElevenLabsToolWebhookRequest<EscalateParams>>();
-  const params = ('parameters' in raw ? raw.parameters : raw) as EscalateParams;
-  const conversationId =
-    c.req.header('X-Conversation-Id') ??
-    ('conversation_id' in raw ? raw.conversation_id : '') ??
-    '';
+  const { params, shop, conversationId } = req;
   const { reason, escalation_type, customer_phone } = params;
 
   // A demo has nobody behind it. Transferring hands the caller `escalation_phone` — ours, on a pool
@@ -59,7 +50,7 @@ export async function handleEscalate(
       });
     }
 
-    const db = getSupabase(c.env);
+    const db = req.db;
     const normalizedPhone = customer_phone ? (tryToE164(customer_phone) ?? customer_phone) : '';
     const normalizedOwner = tryToE164(shop.owner_escalation_phone);
     if (!normalizedOwner) {
@@ -93,7 +84,7 @@ export async function handleEscalate(
       shop,
       normalizedOwner,
       `${shop.name}: New callback request from ${normalizedPhone || 'unknown number'}. Reason: ${reason ?? 'n/a'}`,
-      { requireConsent: false },
+      { requireConsent: false, db },
     );
     if (!notified) {
       // This SMS is the table's only consumer during assisted launch, so a row nobody will read

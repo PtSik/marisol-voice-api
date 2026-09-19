@@ -24,15 +24,21 @@ interface ToolIdentifiers {
   conversationId: string;
 }
 
+// A malformed body is not an error here: it resolves no shop, and the wrapper answers 404 in
+// tool shape rather than letting a parse throw reach the caller as dead air.
+export async function readToolBody(
+  c: Context<{ Bindings: WorkerBindings }>,
+): Promise<Record<string, unknown>> {
+  try {
+    return await c.req.json<Record<string, unknown>>();
+  } catch {
+    return {};
+  }
+}
+
 // ElevenLabs substitutes dynamic variables in the tool BODY (not headers), and may send
 // the LLM params either flat or nested under `parameters`. Read identifiers from both.
-export async function readIdentifiers(
-  c: Context<{ Bindings: WorkerBindings }>,
-): Promise<ToolIdentifiers> {
-  let raw: Record<string, unknown> = {};
-  try {
-    raw = await c.req.json<Record<string, unknown>>();
-  } catch {}
+export function readIdentifiers(raw: Record<string, unknown>): ToolIdentifiers {
   const nested = (raw.parameters as Record<string, unknown> | undefined) ?? {};
   const pick = (key: string) => cleanVar((raw[key] ?? nested[key]) as string | undefined);
   return {
@@ -88,22 +94,48 @@ export async function resolveShopFrom(
   return null;
 }
 
-async function resolveShop(c: Context<{ Bindings: WorkerBindings }>): Promise<ShopRow | null> {
-  const ids = await readIdentifiers(c);
-  return resolveShopFrom(getSupabase(c.env), ids);
+// One parse, one Supabase client and one shop lookup per tool request. Handlers take this
+// instead of re-reading the body: Hono re-runs JSON.parse on every `c.req.json()`.
+export interface ToolRequest<P> {
+  // The body as received. `hasPhone` and `conversationId` are the only things read from it
+  // today, but unwrapping `parameters` loses fields a supported request puts outside them.
+  raw: Record<string, unknown>;
+  params: P;
+  shop: ShopRow;
+  db: ReturnType<typeof getSupabase>;
+  // A browser demo has no caller ID. Anything that writes or texts is gated on this.
+  hasPhone: boolean;
+  // Header first, then the outer body field — the nested copy is not a fallback here.
+  // Unsubstituted placeholders are cleaned at each write site, not here.
+  conversationId: string;
 }
 
-type ToolHandler = (c: Context<{ Bindings: WorkerBindings }>, shop: ShopRow) => Promise<Response>;
+type ToolHandler<P> = (
+  c: Context<{ Bindings: WorkerBindings }>,
+  req: ToolRequest<P>,
+) => Promise<Response>;
 
-function toolRoute(handler: ToolHandler) {
+function toolRoute<P>(handler: ToolHandler<P>) {
   return async (c: Context<{ Bindings: WorkerBindings }>) => {
-    const shop = await resolveShop(c);
+    const raw = await readToolBody(c);
+    const db = getSupabase(c.env);
+    const shop = await resolveShopFrom(db, readIdentifiers(raw));
     if (!shop)
       return c.json(
         { result: 'Unknown conversation or shop not configured.', success: false },
         404,
       );
-    return handler(c, shop);
+    return handler(c, {
+      raw,
+      params: ('parameters' in raw ? raw.parameters : raw) as P,
+      shop,
+      db,
+      hasPhone: hasPhoneContext(raw),
+      conversationId:
+        c.req.header('X-Conversation-Id') ??
+        (('conversation_id' in raw ? raw.conversation_id : '') as string) ??
+        '',
+    });
   };
 }
 
