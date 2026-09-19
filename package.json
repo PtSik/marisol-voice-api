@@ -2,5 +2,8 @@
   "name": "voice-agent",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["apps/*"]
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "diagrams": "bun run scripts/diagrams.ts"
+  }
 }
