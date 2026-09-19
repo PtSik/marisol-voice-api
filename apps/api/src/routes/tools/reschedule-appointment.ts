@@ -1,13 +1,7 @@
 import type { Context } from 'hono';
-import { splitByAttribution } from '../../lib/attribution';
 import { logGcalFailure } from '../../lib/calendar-alerts';
-import {
-  gcalPatchEvent,
-  getGCalClient,
-  getStaffBusy,
-  resolveRouting,
-  writeCalendarFor,
-} from '../../lib/gcal';
+import { checkCalendarConflict } from '../../lib/calendar-guard';
+import { gcalPatchEvent, getGCalClient, resolveRouting, writeCalendarFor } from '../../lib/gcal';
 import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { serviceDuration } from '../../lib/service-catalog';
 import { sendSms } from '../../lib/sms';
@@ -15,9 +9,9 @@ import {
   normalizeSmsLanguage,
   rescheduleConfirmationSms,
   smsWhenLabel,
+  spokenCode,
 } from '../../lib/sms-templates';
-import { findStaff, parseStaff } from '../../lib/staff';
-import { getSupabase } from '../../lib/supabase';
+import { findInRoster, parseStaff } from '../../lib/staff';
 import {
   BOOKING_CODE_TTL_MINUTES,
   generateCode,
@@ -25,32 +19,25 @@ import {
   verifyCode,
 } from '../../lib/verification';
 import type {
-  ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
   RescheduleAppointmentParams,
-  ShopRow,
   WorkerBindings,
 } from '../../types';
-import { hasPhoneContext } from './index';
+import type { ToolRequest } from './index';
 
 export async function handleRescheduleAppointment(
   c: Context<{ Bindings: WorkerBindings }>,
-  shop: ShopRow,
+  { params, shop, db, hasPhone }: ToolRequest<RescheduleAppointmentParams>,
 ): Promise<Response> {
-  const raw = await c.req.json<
-    RescheduleAppointmentParams | ElevenLabsToolWebhookRequest<RescheduleAppointmentParams>
-  >();
-  const params = ('parameters' in raw ? raw.parameters : raw) as RescheduleAppointmentParams;
   const { booking_id, code, new_start_time, new_duration_minutes, new_staff_name } = params;
 
-  if (!hasPhoneContext(raw)) {
+  if (!hasPhone) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: "You're all set — in the real product I'd text your confirmation now.",
       success: true,
     });
   }
 
-  const db = getSupabase(c.env);
   const { data: booking } = await db
     .from('bookings')
     .select(
@@ -84,8 +71,9 @@ export async function handleRescheduleAppointment(
     Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000);
 
   const requestedStaff = new_staff_name ?? booking.staff;
-  const member = findStaff(shop.staff_json, requestedStaff);
-  if (!member && parseStaff(shop.staff_json).length > 0)
+  const roster = parseStaff(shop.staff_json);
+  const member = findInRoster(roster, requestedStaff);
+  if (!member && roster.length > 0)
     return c.json<ElevenLabsToolWebhookResponse>({
       success: false,
       result: 'Please choose an existing team member.',
@@ -95,7 +83,7 @@ export async function handleRescheduleAppointment(
     shop,
     new_start_time,
     durationMinutes,
-    findStaff(shop.staff_json, staff),
+    findInRoster(roster, staff),
   );
   if (!validation.ok) {
     return c.json<ElevenLabsToolWebhookResponse>({
@@ -124,43 +112,23 @@ export async function handleRescheduleAppointment(
           "Changing this appointment to another person's calendar needs help from the business. The original appointment is unchanged.",
       });
     }
-    const [own, busy] = await Promise.all([
-      db
-        .from('bookings')
-        .select('gcal_event_id')
-        .eq('shop_id', shop.id)
-        .eq('status', 'confirmed')
-        .lt('start_at', newEndAt)
-        .gt('end_at', new_start_time),
-      getStaffBusy(c.env, shop, new_start_time, newEndAt, {
-        waitUntil: (p) => c.executionCtx.waitUntil(p),
-      }),
-    ]);
-    if (own.error || busy.unavailable)
+    const guard = await checkCalendarConflict(c.env, db, shop, {
+      startAt: new_start_time,
+      endAt: newEndAt,
+      member,
+      roster,
+      // The DB overlap query above cannot see this booking when the new slot does not
+      // overlap the old one, so a stale mirror of it would block the move.
+      ignoreEventIds: booking.gcal_event_id ? [booking.gcal_event_id] : [],
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
+    if (guard === 'unavailable')
       return c.json<ElevenLabsToolWebhookResponse>({
         success: false,
         result:
           'I can’t verify the calendar right now. Your original appointment is unchanged. Please try again shortly.',
       });
-    const ownIds = new Set((own.data ?? []).map((b) => b.gcal_event_id));
-    if (booking.gcal_event_id) ownIds.add(booking.gcal_event_id);
-    const foreign = splitByAttribution(
-      busy.shared.filter((b) => !ownIds.has(b.id)),
-      Object.fromEntries(
-        Object.entries(busy.perStaff).map(([id, entries]) => [
-          id,
-          entries.filter((b) => !ownIds.has(b.id)),
-        ]),
-      ),
-      routing.attribution,
-      parseStaff(shop.staff_json),
-    );
-    const blocking = [...foreign.shared, ...(member ? (foreign.perStaff[member.id] ?? []) : [])];
-    if (
-      blocking.some(
-        (b) => b.start < new Date(newEndAt).getTime() && b.end > new Date(new_start_time).getTime(),
-      )
-    )
+    if (guard === 'blocked')
       return c.json<ElevenLabsToolWebhookResponse>({
         success: false,
         result:
@@ -251,7 +219,7 @@ export async function handleRescheduleAppointment(
       staff,
       code: newCode,
     }),
-    { consentAt: booking.sms_consent_at },
+    { consentAt: booking.sms_consent_at, db },
   );
 
   const result = smsSent
@@ -271,10 +239,6 @@ export async function handleRescheduleAppointment(
       sms_sent: smsSent,
     },
   });
-}
-
-function spokenCode(code: string): string {
-  return code.split('').join(' ');
 }
 
 function rescheduleTimeError(reason: BookingTimeReason, staffName: string): string {

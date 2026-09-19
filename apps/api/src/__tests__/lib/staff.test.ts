@@ -121,7 +121,7 @@ describe('staff — resolveStaffForBooking', () => {
   });
 
   it('lets a shop with no roster book anyone', () => {
-    expect(resolveStaffForBooking('[]', 'Whoever')).toEqual({ member: undefined });
+    expect(resolveStaffForBooking('[]', 'Whoever')).toEqual({ member: undefined, roster: [] });
   });
 
   it('accepts the name the agent may echo back with its schedule note', () => {

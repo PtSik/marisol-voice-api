@@ -1,12 +1,12 @@
 import type { Context } from 'hono';
-import { splitByAttribution } from '../../lib/attribution';
 import { logGcalFailure } from '../../lib/calendar-alerts';
+import { checkCalendarConflict } from '../../lib/calendar-guard';
 import {
+  CALENDAR_SETUP_INCOMPLETE_RESULT,
+  calendarSetupIncomplete,
   deterministicEventId,
   gcalCreateEvent,
   getGCalClient,
-  getStaffBusy,
-  resolveRouting,
   writeCalendarFor,
 } from '../../lib/gcal';
 import {
@@ -23,39 +23,25 @@ import {
   bookingConfirmationSms,
   normalizeSmsLanguage,
   smsWhenLabel,
+  spokenCode,
 } from '../../lib/sms-templates';
-import { parseStaff, resolveStaffForBooking } from '../../lib/staff';
-import { getSupabase } from '../../lib/supabase';
+import { resolveStaffForBooking } from '../../lib/staff';
 import { BOOKING_CODE_TTL_MINUTES, generateCode, storeCode } from '../../lib/verification';
 import type {
   BookAppointmentParams,
-  ElevenLabsToolWebhookRequest,
   ElevenLabsToolWebhookResponse,
-  ShopRow,
   WorkerBindings,
 } from '../../types';
-import { hasPhoneContext } from './index';
+import type { ToolRequest } from './index';
 
 export async function handleBookAppointment(
   c: Context<{ Bindings: WorkerBindings }>,
-  shop: ShopRow,
+  { params, shop, db, hasPhone, conversationId }: ToolRequest<BookAppointmentParams>,
 ): Promise<Response> {
-  const raw = await c.req.json<
-    BookAppointmentParams | ElevenLabsToolWebhookRequest<BookAppointmentParams>
-  >();
-  const params = ('parameters' in raw ? raw.parameters : raw) as BookAppointmentParams;
-  const conversationId =
-    c.req.header('X-Conversation-Id') ??
-    ('conversation_id' in raw ? raw.conversation_id : '') ??
-    '';
-  if (
-    shop.integration === 'google_calendar' &&
-    (!shop.integration_credentials_encrypted || !shop.calendar_routing?.write_calendar_id)
-  ) {
+  if (calendarSetupIncomplete(shop)) {
     return c.json<ElevenLabsToolWebhookResponse>({
       success: false,
-      result:
-        'Google Calendar still needs to be connected. Please finish calendar setup in the Marisol portal before booking an appointment.',
+      result: CALENDAR_SETUP_INCOMPLETE_RESULT,
     });
   }
   const {
@@ -88,7 +74,7 @@ export async function handleBookAppointment(
       success: false,
     });
   }
-  const member = resolved.member;
+  const { member, roster } = resolved;
 
   const validation = validateBookingTime(shop, start_time, duration_minutes, member);
   if (!validation.ok) {
@@ -100,7 +86,7 @@ export async function handleBookAppointment(
 
   // Web demo: no caller ID, so there is no phone to key a customer on or text. Everything past
   // here writes to the database and sends SMS, which a demo must not do.
-  if (!hasPhoneContext(raw)) {
+  if (!hasPhone) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: "You're all set — in the real product I'd text your confirmation now.",
       success: true,
@@ -121,41 +107,22 @@ export async function handleBookAppointment(
   const startDateStr = new Date(startMs).toLocaleDateString('en-CA', { timeZone: shop.timezone });
   const confirmedEnd = localIso(endMs, tzOffsetMinutes(startDateStr, shop.timezone));
 
-  const db = getSupabase(c.env);
-
-  // Race guard against foreign calendar events (Booksy / manual GCal entries) — the GiST
-  // EXCLUDE only catches our own bookings. Our mirrored events are deduped by gcal_event_id.
   if (shop.integration === 'google_calendar') {
-    const [ownRes, busy] = await Promise.all([
-      db
-        .from('bookings')
-        .select('gcal_event_id')
-        .eq('shop_id', shop.id)
-        .eq('status', 'confirmed')
-        .lt('start_at', endAt)
-        .gt('end_at', start_time),
-      getStaffBusy(c.env, shop, start_time, endAt, {
-        waitUntil: (p) => c.executionCtx.waitUntil(p),
-      }),
-    ]);
-    if (ownRes.error || busy.unavailable) {
+    const guard = await checkCalendarConflict(c.env, db, shop, {
+      startAt: start_time,
+      endAt,
+      member,
+      roster,
+      waitUntil: (p) => c.executionCtx.waitUntil(p),
+    });
+    if (guard === 'unavailable') {
       return c.json<ElevenLabsToolWebhookResponse>({
         success: false,
         result:
           'I can’t verify the appointment calendar right now. No appointment has been made. Please try again shortly.',
       });
     }
-    const ownEventIds = new Set(
-      (ownRes.data ?? []).map((b) => b.gcal_event_id).filter((id): id is string => !!id),
-    );
-    const foreign = splitByAttribution(
-      busy.shared.filter((b) => !ownEventIds.has(b.id)),
-      busy.perStaff,
-      resolveRouting(shop).attribution,
-      parseStaff(shop.staff_json),
-    );
-    const blocking = [...foreign.shared, ...(member ? (foreign.perStaff[member.id] ?? []) : [])];
-    if (blocking.some((b) => b.start < endMs && b.end > startMs)) {
+    if (guard === 'blocked') {
       return c.json<ElevenLabsToolWebhookResponse>({
         result: 'That time was just taken. Let me check other options for you.',
         success: false,
@@ -260,7 +227,7 @@ export async function handleBookAppointment(
       staff: member?.name ?? staff_name,
       code,
     }),
-    { consentAt: smsConsentAt },
+    { consentAt: smsConsentAt, db },
   );
 
   const result = smsSent
@@ -278,10 +245,6 @@ export async function handleBookAppointment(
       sms_sent: smsSent,
     },
   });
-}
-
-function spokenCode(code: string): string {
-  return code.split('').join(' ');
 }
 
 function bookingTimeError(reason: BookingTimeReason, staffName: string): string {

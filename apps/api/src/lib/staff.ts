@@ -72,11 +72,18 @@ export function normalizeStaffName(name: string): string {
   return name.replace(/\s*\([^)]*\)\s*$/, '').trim();
 }
 
-export function findStaff(staffJson: string, name: string | undefined): StaffMember | undefined {
+export function findInRoster(
+  roster: StaffMember[],
+  name: string | undefined,
+): StaffMember | undefined {
   if (!name) return undefined;
   const wanted = normalizeStaffName(name).toLowerCase();
   if (!wanted) return undefined;
-  return parseStaff(staffJson).find((m) => m.name.toLowerCase() === wanted);
+  return roster.find((m) => m.name.toLowerCase() === wanted);
+}
+
+export function findStaff(staffJson: string, name: string | undefined): StaffMember | undefined {
+  return findInRoster(parseStaff(staffJson), name);
 }
 
 // A transcription slip ("Luiz" for "Luis") must not become a booking for someone who does
@@ -85,11 +92,12 @@ export function findStaff(staffJson: string, name: string | undefined): StaffMem
 export function resolveStaffForBooking(
   staffJson: string,
   name: string | undefined,
-): { member: StaffMember | undefined } | { unknown: string[] } {
+): { member: StaffMember | undefined; roster: StaffMember[] } | { unknown: string[] } {
   const roster = parseStaff(staffJson);
-  const member = findStaff(staffJson, name);
+  const member = findInRoster(roster, name);
   if (roster.length > 0 && !member) return { unknown: roster.map((m) => m.name) };
-  return { member };
+  // The roster comes back so the booking path does not parse staff_json a second time.
+  return { member, roster };
 }
 
 const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
