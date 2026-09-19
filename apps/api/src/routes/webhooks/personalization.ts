@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { getHoursForDate, isClosed } from '../../lib/hours';
-import { toE164, tryToE164 } from '../../lib/normalize';
+import { tryToE164 } from '../../lib/normalize';
 import { CALLABLE_STATUSES } from '../../lib/shop-status';
 import { parseStaff, staffSummary } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';

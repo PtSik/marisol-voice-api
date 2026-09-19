@@ -5,7 +5,7 @@ import { getSupabase } from './supabase';
 // hears — and long enough to trip the ElevenLabs tool timeout.
 const SMS_TIMEOUT_MS = 5_000;
 
-type SmsShop = Pick<ShopRow, 'id' | 'twilio_number' | 'sms_enabled'>;
+type SmsShop = Pick<ShopRow, 'twilio_number' | 'sms_enabled'>;
 
 export interface SmsOptions {
   // Customer messages require explicit consent captured during booking. Operational messages to

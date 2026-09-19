@@ -1,7 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 
-const CODE_TTL_MINUTES = 15;
-
 export function generateCode(): string {
   const digits = crypto.getRandomValues(new Uint8Array(6));
   return Array.from(digits)
@@ -24,7 +22,7 @@ export async function storeCode(
   db: SupabaseClient,
   bookingId: string,
   code: string,
-  ttlMinutes = CODE_TTL_MINUTES,
+  ttlMinutes: number,
 ): Promise<void> {
   const codeHash = await hashCode(code);
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000).toISOString();

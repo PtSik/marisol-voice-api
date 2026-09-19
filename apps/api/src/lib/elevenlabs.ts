@@ -35,19 +35,3 @@ export async function registerCall(
 
   return { twiml, conversation_id };
 }
-
-export async function getAgent(
-  env: WorkerBindings,
-  agentId: string,
-): Promise<Record<string, unknown>> {
-  const res = await fetch(`${BASE_URL}/convai/agents/${agentId}`, {
-    headers: { 'xi-api-key': env.ELEVENLABS_API_KEY },
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`ElevenLabs getAgent failed ${res.status}: ${text}`);
-  }
-
-  return res.json<Record<string, unknown>>();
-}

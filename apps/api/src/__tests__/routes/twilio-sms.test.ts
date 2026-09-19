@@ -7,9 +7,14 @@ describe('SMS preference keywords', () => {
     expect(smsPreferenceAction('UNSUBSCRIBE')).toBe('opted_out');
   });
 
-  it('recognizes opt-in and help keywords', () => {
+  it('recognizes opt-in keywords', () => {
     expect(smsPreferenceAction('START')).toBe('opted_in');
-    expect(smsPreferenceAction('help')).toBe('help');
+    expect(smsPreferenceAction('unstop')).toBe('opted_in');
+  });
+
+  it('leaves the preference untouched for HELP and INFO', () => {
+    expect(smsPreferenceAction('HELP')).toBeNull();
+    expect(smsPreferenceAction('info')).toBeNull();
   });
 
   it('prefers Twilio Advanced Opt-Out metadata', () => {

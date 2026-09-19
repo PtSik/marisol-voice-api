@@ -1,10 +1,3 @@
-export interface PersonalizationWebhookRequest {
-  caller_id: string;
-  agent_id: string;
-  called_number: string;
-  call_sid: string;
-}
-
 export interface ConversationDynamicVariables {
   shop_id: string;
   shop_name: string;
@@ -66,12 +59,6 @@ export interface AvailableSlot {
   label: string;
 }
 
-export interface CheckAvailabilityResult {
-  available_slots: AvailableSlot[];
-  total_available: number;
-  date: string;
-}
-
 export interface BookAppointmentParams {
   staff_name: string;
   start_time: string;
@@ -84,33 +71,8 @@ export interface BookAppointmentParams {
   sms_consent?: boolean;
 }
 
-export interface BookAppointmentResult {
-  booking_id: string;
-  confirmed_start_time: string;
-  confirmed_end_time: string;
-  staff_name: string;
-  calendar_event_id?: string;
-  sms_sent: boolean;
-}
-
 export interface LookupCustomerParams {
   phone_number: string;
-}
-
-export interface LookupCustomerResult {
-  found: boolean;
-  customer_name?: string;
-  last_visit?: string;
-  visit_count?: number;
-  preferred_service?: string;
-  preferred_staff?: string;
-  upcoming_bookings?: Array<{
-    booking_id: string;
-    start_at: string;
-    end_at: string;
-    service: string | null;
-    staff: string;
-  }>;
 }
 
 export interface CancelAppointmentParams {
@@ -118,13 +80,6 @@ export interface CancelAppointmentParams {
   code: string;
   reason?: string;
   language?: 'en' | 'es';
-}
-
-export interface CancelAppointmentResult {
-  cancelled: boolean;
-  booking_id: string;
-  original_start_time?: string;
-  sms_sent: boolean;
 }
 
 export interface RescheduleAppointmentParams {
@@ -136,27 +91,10 @@ export interface RescheduleAppointmentParams {
   language?: 'en' | 'es';
 }
 
-export interface RescheduleAppointmentResult {
-  rescheduled: boolean;
-  booking_id: string;
-  old_start_time: string;
-  new_start_time: string;
-  new_end_time: string;
-  staff_name: string;
-  sms_sent: boolean;
-}
-
 export interface EscalateParams {
   reason: string;
   escalation_type: 'transfer' | 'callback';
   customer_phone?: string;
-}
-
-export interface EscalateResult {
-  escalated: boolean;
-  escalation_type: 'transfer' | 'callback';
-  message: string;
-  transfer_to?: string;
 }
 
 export interface PostCallWebhookPayload {
@@ -273,32 +211,6 @@ export interface CalendarSyncStateRow {
   synced_at: string;
 }
 
-export interface CallbackRow {
-  id: string;
-  shop_id: string;
-  customer_phone: string;
-  reason: string | null;
-  elevenlabs_conversation_id: string | null;
-  status: string;
-  created_at: string;
-  resolved_at: string | null;
-}
-
-export interface VerificationCodeRow {
-  id: string;
-  booking_id: string;
-  code_hash: string;
-  expires_at: string;
-  used_at: string | null;
-  created_at: string;
-}
-
-export interface VerifiedWebhookContext {
-  signature: string;
-  timestamp: number;
-  idempotency_key: string;
-}
-
 export interface WorkerBindings {
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
@@ -319,9 +231,4 @@ export interface WorkerBindings {
   GOOGLE_OAUTH_CLIENT_SECRET?: string;
   // Secret incoming-webhook URL. Unset means team alerts are off.
   DISCORD_ALERT_WEBHOOK_URL?: string;
-}
-
-export interface WorkerVariables {
-  webhook: VerifiedWebhookContext;
-  shop: ShopRow;
 }

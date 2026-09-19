@@ -4,7 +4,7 @@ import { getSupabase } from '../../lib/supabase';
 import { readSignedTwilioForm } from '../../lib/twilio-signature';
 import type { WorkerBindings } from '../../types';
 
-export type SmsPreferenceAction = 'opted_in' | 'opted_out' | 'help' | null;
+export type SmsPreferenceAction = 'opted_in' | 'opted_out' | null;
 
 const STOP_WORDS = new Set([
   'STOP',
@@ -17,13 +17,11 @@ const STOP_WORDS = new Set([
   'OPTOUT',
 ]);
 const START_WORDS = new Set(['START', 'UNSTOP', 'YES']);
-const HELP_WORDS = new Set(['HELP', 'INFO']);
 
 export function smsPreferenceAction(body: string, optOutType?: string): SmsPreferenceAction {
   const keyword = (optOutType || body).trim().toUpperCase();
-  if (keyword === 'STOP' || STOP_WORDS.has(keyword)) return 'opted_out';
-  if (keyword === 'START' || START_WORDS.has(keyword)) return 'opted_in';
-  if (keyword === 'HELP' || HELP_WORDS.has(keyword)) return 'help';
+  if (STOP_WORDS.has(keyword)) return 'opted_out';
+  if (START_WORDS.has(keyword)) return 'opted_in';
   return null;
 }
 
