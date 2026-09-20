@@ -172,16 +172,16 @@ describe('buildShopUpdate', () => {
     }
   });
 
-  // Anything outside the CHECK in migration 0015 is a shop whose number the call lookups no longer
+  // Anything outside the CHECK in migration 0021 is a shop whose number the call lookups no longer
   // recognise: the line answers 404 and nothing in the logs says the status is why.
   it('lets every status the schema allows through', () => {
-    for (const status of ['trial', 'active', 'cancelled', 'suspended', 'demo']) {
+    for (const status of ['active', 'cancelled', 'suspended', 'demo']) {
       expect(buildShopUpdate({ status })).toEqual({ update: { status } });
     }
   });
 
   it('rejects a status the schema would refuse', () => {
-    for (const status of ['Demo', 'paused', '', 1, null]) {
+    for (const status of ['trial', 'Demo', 'paused', '', 1, null]) {
       expect('error' in buildShopUpdate({ status })).toBe(true);
     }
   });

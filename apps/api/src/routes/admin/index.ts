@@ -56,10 +56,10 @@ function isValidIsDemo(v: unknown): boolean {
   return v === undefined || typeof v === 'boolean';
 }
 
-// Mirrors the CHECK in migration 0015. Undefined is valid — the column defaults to 'trial'. Without
-// this a typo'd status lands as a Postgres cast error, and a status the lookups do not know about
-// (see CALLABLE_STATUSES) is a shop whose number answers 404 with nothing to say why.
-const SHOP_STATUSES = ['trial', 'active', 'cancelled', 'suspended', 'demo'];
+// Mirrors the CHECK in migration 0021. Undefined is valid — the column defaults to 'suspended'.
+// Without this a typo'd status lands as a Postgres cast error, and a status the lookups do not know
+// about (see CALLABLE_STATUSES) is a shop whose number answers 404 with nothing to say why.
+const SHOP_STATUSES = ['active', 'cancelled', 'suspended', 'demo'];
 
 function isValidStatus(v: unknown): boolean {
   return v === undefined || (typeof v === 'string' && SHOP_STATUSES.includes(v));

@@ -45,13 +45,13 @@ describe('tools — assisted launch status gate', () => {
     expect(shop?.id).toBe('shop-1');
   });
 
-  it('keeps legacy trial shops callable during the assisted-launch migration', async () => {
+  it('refuses a retired trial shop', async () => {
     const shop = await resolveShopFrom(shopDb({ id: 'shop-1', status: 'trial' }), {
       shopId: 'shop-1',
       calledNumber: '',
       conversationId: '',
     });
-    expect(shop?.id).toBe('shop-1');
+    expect(shop).toBeNull();
   });
 
   it('refuses a suspended shop even when its id is valid', async () => {
