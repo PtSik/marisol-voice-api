@@ -43,6 +43,19 @@ const MUTABLE_FIELDS = new Set([
   'status',
 ]);
 
+// The columns a create may never carry. `id` and `created_at` belong to the database, and the
+// calendar token is written only by the OAuth connect flow — a payload that plants one would give a
+// shop access nobody granted. Named apart from the generic unknown-field message so it is loud.
+const CREATE_FORBIDDEN_FIELDS = new Set(['id', 'created_at', 'integration_credentials_encrypted']);
+
+const REQUIRED_CREATE_FIELDS = [
+  'name',
+  'twilio_number',
+  'escalation_phone',
+  'owner_escalation_phone',
+  'owner_email',
+];
+
 // Undefined is valid — the column defaults to 'en', so provisioning may simply omit it.
 function isValidPrimaryLanguage(v: unknown): boolean {
   return v === undefined || v === 'en' || v === 'es';
@@ -191,6 +204,47 @@ function validateClosuresJson(raw: unknown): { value: string } | { error: string
   return { value: JSON.stringify(parsed) };
 }
 
+// Create and update accept the same columns and check each one the same way; they differ only in
+// what a missing field means. One dispatch keeps a new column from being validated on one path and
+// waved through on the other — which is how create ended up storing hours PATCH would refuse.
+function validateShopField(key: string, value: unknown): { value: unknown } | { error: string } {
+  switch (key) {
+    case 'hours_json':
+      return validateHoursJson(value);
+    case 'closures_json':
+      return validateClosuresJson(value);
+    case 'staff_json':
+      return validateStaffJson(value);
+    case 'calendar_routing':
+      return validateCalendarRouting(value);
+    case 'calendar_access_granted_at':
+      if (value !== null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value))))
+        return { error: 'invalid calendar access date' };
+      return { value };
+    case 'service_catalog':
+      if (!validServiceCatalog(value))
+        return { error: 'service_catalog must contain valid fixed-duration services' };
+      return { value };
+    case 'transfers_enabled':
+    case 'reminders_enabled':
+    case 'sms_enabled':
+      if (typeof value !== 'boolean') return { error: `${key} must be a boolean` };
+      return { value };
+    case 'primary_language':
+      if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };
+      return { value };
+    case 'is_demo':
+      if (!isValidIsDemo(value)) return { error: 'is_demo must be a boolean' };
+      return { value };
+    case 'status':
+      if (!isValidStatus(value))
+        return { error: `status must be one of: ${SHOP_STATUSES.join(', ')}` };
+      return { value };
+    default:
+      return { value };
+  }
+}
+
 export const adminRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
 adminRoutes.use('*', adminAuth());
@@ -281,6 +335,30 @@ adminRoutes.get('/shops/:id/activity-summary', async (c) => {
   return c.json({ calls_30d: calls.count ?? 0, bookings_30d: bookings.count ?? 0 });
 });
 
+// Provisioning creates shops through here, so every value is canonicalised on the way in — a shop
+// must have stable staff ids and storable hours from its first second.
+export function buildShopCreate(
+  body: Record<string, unknown>,
+): { row: Record<string, unknown> } | { error: string } {
+  for (const field of REQUIRED_CREATE_FIELDS) {
+    if (!body[field]) return { error: `Missing required field: ${field}` };
+  }
+
+  const row: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (CREATE_FORBIDDEN_FIELDS.has(key)) return { error: `${key} cannot be set on create` };
+    // PATCH drops an unknown key silently; create names it. This is the one call that decides what
+    // a shop row contains, and a field the worker never reads is a setting the owner believes they
+    // configured — better a 400 the provisioning run surfaces than a salon missing it in the dark.
+    if (!MUTABLE_FIELDS.has(key)) return { error: `Unknown field: ${key}` };
+    const r = validateShopField(key, value);
+    if ('error' in r) return r;
+    row[key] = r.value;
+  }
+
+  return { row };
+}
+
 adminRoutes.post('/shops', async (c) => {
   let body: Record<string, unknown>;
   try {
@@ -289,45 +367,11 @@ adminRoutes.post('/shops', async (c) => {
     return c.json({ error: 'Invalid JSON' }, 400);
   }
 
-  const required = [
-    'name',
-    'twilio_number',
-    'escalation_phone',
-    'owner_escalation_phone',
-    'owner_email',
-  ];
-  for (const field of required) {
-    if (!body[field]) return c.json({ error: `Missing required field: ${field}` }, 400);
-  }
-
-  if (body.service_catalog !== undefined && !validServiceCatalog(body.service_catalog))
-    return c.json({ error: 'Invalid service catalog' }, 400);
-  if (body.transfers_enabled !== undefined && typeof body.transfers_enabled !== 'boolean')
-    return c.json({ error: 'Invalid transfer setting' }, 400);
-  if (body.sms_enabled !== undefined && typeof body.sms_enabled !== 'boolean')
-    return c.json({ error: 'Invalid SMS setting' }, 400);
-  // Provisioning creates shops through here, so canonicalise staff on the way in — a shop
-  // must have stable staff ids from its first second.
-  if (body.staff_json !== undefined) {
-    const r = validateStaffJson(body.staff_json);
-    if ('error' in r) return c.json({ error: r.error }, 400);
-    body.staff_json = r.value;
-  }
-
-  if (!isValidPrimaryLanguage(body.primary_language)) {
-    return c.json({ error: "primary_language must be 'en' or 'es'" }, 400);
-  }
-
-  if (!isValidIsDemo(body.is_demo)) {
-    return c.json({ error: 'is_demo must be a boolean' }, 400);
-  }
-
-  if (!isValidStatus(body.status)) {
-    return c.json({ error: `status must be one of: ${SHOP_STATUSES.join(', ')}` }, 400);
-  }
+  const built = buildShopCreate(body);
+  if ('error' in built) return c.json({ error: built.error }, 400);
 
   const db = getSupabase(c.env);
-  const { data, error } = await db.from('shops').insert(body).select().single();
+  const { data, error } = await db.from('shops').insert(built.row).select().single();
   if (error) return c.json({ error: error.message }, 400);
   return c.json({ shop: data }, 201);
 });
@@ -338,49 +382,9 @@ export function buildShopUpdate(
   const update: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body)) {
     if (!MUTABLE_FIELDS.has(key)) continue;
-    if (key === 'hours_json') {
-      const r = validateHoursJson(value);
-      if ('error' in r) return r;
-      update[key] = r.value;
-    } else if (key === 'closures_json') {
-      const r = validateClosuresJson(value);
-      if ('error' in r) return r;
-      update[key] = r.value;
-    } else if (key === 'staff_json') {
-      const r = validateStaffJson(value);
-      if ('error' in r) return r;
-      update[key] = r.value;
-    } else if (key === 'calendar_routing') {
-      const r = validateCalendarRouting(value);
-      if ('error' in r) return r;
-      update[key] = r.value;
-    } else if (key === 'calendar_access_granted_at') {
-      if (value !== null && (typeof value !== 'string' || !Number.isFinite(Date.parse(value))))
-        return { error: 'invalid calendar access date' };
-      update[key] = value;
-    } else if (key === 'service_catalog') {
-      if (!validServiceCatalog(value))
-        return { error: 'service_catalog must contain valid fixed-duration services' };
-      update[key] = value;
-    } else if (key === 'transfers_enabled') {
-      if (typeof value !== 'boolean') return { error: 'transfers_enabled must be a boolean' };
-      update[key] = value;
-    } else if (key === 'reminders_enabled' || key === 'sms_enabled') {
-      if (typeof value !== 'boolean') return { error: `${key} must be a boolean` };
-      update[key] = value;
-    } else if (key === 'primary_language') {
-      if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };
-      update[key] = value;
-    } else if (key === 'is_demo') {
-      if (!isValidIsDemo(value)) return { error: 'is_demo must be a boolean' };
-      update[key] = value;
-    } else if (key === 'status') {
-      if (!isValidStatus(value))
-        return { error: `status must be one of: ${SHOP_STATUSES.join(', ')}` };
-      update[key] = value;
-    } else {
-      update[key] = value;
-    }
+    const r = validateShopField(key, value);
+    if ('error' in r) return r;
+    update[key] = r.value;
   }
 
   // Disconnecting the integration must drop the token and the mapping together — a routing

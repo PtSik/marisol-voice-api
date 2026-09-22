@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import worker from '../../index';
-import { buildShopUpdate } from '../../routes/admin';
+import { buildShopCreate, buildShopUpdate } from '../../routes/admin';
 import type { CalendarRouting, WorkerBindings } from '../../types';
 
 // Empty SUPABASE_URL makes the DB call throw, so a request that reaches Supabase
@@ -27,6 +27,137 @@ function patchShop(body: unknown, auth = true) {
     ctx,
   );
 }
+
+function postShop(body: unknown, auth = true) {
+  return worker.fetch(
+    new Request('https://example.com/admin/shops', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(auth ? { Authorization: 'Bearer testkey' } : {}),
+      },
+      body: JSON.stringify(body),
+    }),
+    env,
+    ctx,
+  );
+}
+
+const REQUIRED = {
+  name: 'Salon',
+  twilio_number: '+13055550100',
+  escalation_phone: '+13055550111',
+  owner_escalation_phone: '+13055550111',
+  owner_email: 'owner@example.com',
+};
+
+// The exact key set landing's buildShopPayload sends. If create ever stops accepting one of these,
+// provisioning fails at the last step — after the Twilio number has already been bought.
+const PROVISIONING_PAYLOAD = {
+  ...REQUIRED,
+  transfers_enabled: false,
+  service_catalog: [{ name: 'Full groom', duration_minutes: 90 }],
+  timezone: 'America/New_York',
+  hours_json: JSON.stringify({ Mon: '9:00am-7:00pm', Sun: 'closed' }),
+  services_json: JSON.stringify(['Full groom — 90 min / $85']),
+  staff_json: JSON.stringify([{ id: 'stf_ana', name: 'Ana' }]),
+  address: '1 Ocean Dr',
+  notes: 'Street parking',
+  integration: 'google_calendar',
+  status: 'suspended',
+  reminders_enabled: true,
+  primary_language: 'es',
+  elevenlabs_agent_id: 'agent_123',
+};
+
+describe('POST /admin/shops', () => {
+  it('requires admin auth', async () => {
+    const res = await postShop(REQUIRED, false);
+    expect(res.status).toBe(401);
+  });
+
+  it('accepts a create with only the required fields (reaches the DB)', async () => {
+    expect((await postShop(REQUIRED)).status).toBe(500);
+  });
+
+  it('accepts the payload landing provisioning sends (reaches the DB)', async () => {
+    expect((await postShop(PROVISIONING_PAYLOAD)).status).toBe(500);
+  });
+
+  it('names the missing required field', async () => {
+    const { name, ...withoutName } = REQUIRED;
+    const res = await postShop(withoutName);
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('name');
+  });
+
+  // The connect flow is the only writer of a calendar token. A create that could carry one would
+  // hand a shop access to a calendar nobody granted it.
+  it('refuses a create that carries a credentials blob', async () => {
+    const res = await postShop({ ...REQUIRED, integration_credentials_encrypted: 'planted' });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('integration_credentials_encrypted');
+  });
+
+  it('refuses a create that sets the id or created_at itself', async () => {
+    for (const field of ['id', 'created_at']) {
+      const res = await postShop({ ...REQUIRED, [field]: 'spoofed' });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('names an unknown field rather than letting Postgres return a cast error', async () => {
+    const res = await postShop({ ...REQUIRED, sms_enbaled: true });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('sms_enbaled');
+  });
+
+  // Until this packet a create stored hours PATCH would have refused, so a shop could be born with
+  // opening times the agent cannot read.
+  it('rejects on create the same malformed values PATCH rejects', async () => {
+    expect((await postShop({ ...REQUIRED, hours_json: { Sat: '9-3' } })).status).toBe(400);
+    expect((await postShop({ ...REQUIRED, closures_json: ['not-a-date'] })).status).toBe(400);
+    expect(
+      (await postShop({ ...REQUIRED, calendar_routing: { staff_calendars: {} } })).status,
+    ).toBe(400);
+    expect((await postShop({ ...REQUIRED, status: 'trial' })).status).toBe(400);
+    expect((await postShop({ ...REQUIRED, is_demo: 'true' })).status).toBe(400);
+    expect((await postShop({ ...REQUIRED, primary_language: 'pl' })).status).toBe(400);
+  });
+});
+
+describe('buildShopCreate', () => {
+  it('canonicalises staff so a shop has stable ids from its first second', () => {
+    const built = buildShopCreate({ ...REQUIRED, staff_json: ['Ana', 'Luis'] });
+    expect('error' in built).toBe(false);
+    if ('error' in built) return;
+    const staff = JSON.parse(built.row.staff_json as string) as Array<{ id: string; name: string }>;
+    expect(staff.map((m) => m.name)).toEqual(['Ana', 'Luis']);
+    expect(staff.every((m) => !!m.id)).toBe(true);
+  });
+
+  it('stores hours as the canonical JSON string, not the object it was given', () => {
+    const built = buildShopCreate({ ...REQUIRED, hours_json: { 'Mon-Fri': '9am-7pm' } });
+    expect('error' in built).toBe(false);
+    if ('error' in built) return;
+    expect(built.row.hours_json).toBe('{"Mon-Fri":"9am-7pm"}');
+  });
+
+  // An empty string passes `MUTABLE_FIELDS.has`, so the required check has to be its own gate.
+  it('treats an empty required field as missing', () => {
+    expect('error' in buildShopCreate({ ...REQUIRED, owner_email: '' })).toBe(true);
+  });
+
+  it('keeps account_id available so a shop can be created against an account', () => {
+    const built = buildShopCreate({ ...REQUIRED, account_id: 'acc-1' });
+    expect('error' in built).toBe(false);
+    if ('error' in built) return;
+    expect(built.row.account_id).toBe('acc-1');
+  });
+});
 
 describe('PATCH /admin/shops/:id', () => {
   it('requires admin auth', async () => {
