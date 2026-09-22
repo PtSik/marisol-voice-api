@@ -9,6 +9,7 @@ import {
   gcalListBusy,
   gcalListCalendars,
   gcalListDeltas,
+  getGCalClient,
   getStaffBusy,
   resolveRouting,
   writeCalendarFor,
@@ -451,5 +452,35 @@ describe('gcalListDeltas', () => {
     const err = await gcalListDeltas('primary', 'tok', { syncToken: 'st_old' }).catch((e) => e);
     expect(err).toBeInstanceOf(GCalHttpError);
     expect((err as GCalHttpError).status).toBe(410);
+  });
+});
+
+describe('getGCalClient', () => {
+  const env = {
+    ENCRYPTION_KEY: 'a'.repeat(64),
+    GOOGLE_OAUTH_CLIENT_ID: 'cid',
+    GOOGLE_OAUTH_CLIENT_SECRET: 'secret',
+  } as WorkerBindings;
+
+  it('refreshes an OAuth grant and defaults the calendar to primary', async () => {
+    const creds = await encrypt(
+      JSON.stringify({ type: 'oauth', refresh_token: 'rt_primary' }),
+      env.ENCRYPTION_KEY,
+    );
+    mockFetch(200, { access_token: 'at_1', expires_in: 3600 });
+    expect(await getGCalClient(env, creds)).toEqual({ calendar_id: 'primary', token: 'at_1' });
+  });
+
+  // The service-account grant is retired; a blob in that shape must name the fix rather than
+  // reach Google with no refresh token.
+  it('refuses a credential blob that is not an OAuth grant', async () => {
+    const creds = await encrypt(
+      JSON.stringify({ client_email: 'bot@example.iam.gserviceaccount.com', private_key: 'pk' }),
+      env.ENCRYPTION_KEY,
+    );
+    globalThis.fetch = (async () => {
+      throw new Error('must not reach Google');
+    }) as typeof fetch;
+    await expect(getGCalClient(env, creds)).rejects.toThrow('must reconnect Google Calendar');
   });
 });
