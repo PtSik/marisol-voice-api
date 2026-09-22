@@ -143,3 +143,69 @@ describe('escalate — real shops are untouched', () => {
     expect(body.result).not.toMatch(/will be in touch/i);
   });
 });
+
+// Migration 0024 drops callbacks.status. The insert must stop naming it: the SMS goes out only
+// after the row lands, so an insert rejected by the contracted schema turns a promised callback
+// into a transfer offer.
+describe('escalate — the callback row against the contracted schema', () => {
+  it('files a callback without a status column and confirms it to the caller', async () => {
+    let inserted: Record<string, unknown> | null = null;
+    const db = {
+      from: (table: string) => ({
+        // sendSms checks the opt-out list before dialling Twilio; nobody here has opted out.
+        select: () => ({
+          eq: () => ({ eq: () => ({ maybeSingle: async () => ({ data: null, error: null }) }) }),
+        }),
+        insert: (row: Record<string, unknown>) => {
+          expect(table).toBe('callbacks');
+          inserted = row;
+          return {
+            select: () => ({ single: async () => ({ data: { id: 'cb_1' }, error: null }) }),
+          };
+        },
+        delete: () => ({
+          eq: async () => {
+            throw new Error('the row was deleted — the SMS was treated as failed');
+          },
+        }),
+      }),
+    };
+    const smsShop = { ...realShop, sms_enabled: true } as unknown as ShopRow;
+    const context = {
+      json: (body: unknown) => Response.json(body),
+      env: { SMS_ENABLED: 'true', TWILIO_ACCOUNT_SID: 'AC', TWILIO_AUTH_TOKEN: 't' },
+      executionCtx: { waitUntil: () => {} },
+    } as unknown as Context<{ Bindings: WorkerBindings }>;
+
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ sid: 'SM1' }), { status: 201 })) as typeof fetch;
+    try {
+      const params: EscalateParams = {
+        escalation_type: 'callback',
+        customer_phone: '+13055559999',
+        reason: 'price question',
+      };
+      const res = await handleEscalate(context, {
+        raw: { ...params },
+        params,
+        shop: smsShop,
+        hasPhone: true,
+        conversationId: 'conv_test',
+        db,
+      } as unknown as ToolRequest<EscalateParams>);
+      const body = (await res.json()) as { data?: Record<string, unknown> };
+      expect(body.data?.escalated).toBe(true);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(inserted).not.toBeNull();
+    expect(Object.keys(inserted ?? {}).sort()).toEqual([
+      'customer_phone',
+      'elevenlabs_conversation_id',
+      'reason',
+      'shop_id',
+    ]);
+  });
+});

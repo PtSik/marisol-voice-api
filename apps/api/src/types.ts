@@ -174,8 +174,6 @@ export interface ShopRow {
   sms_enabled?: boolean;
   calendar_access_granted_at?: string | null;
   status: string;
-  trial_ends_at: string | null;
-  cancelled_at: string | null;
   created_at: string;
 }
 

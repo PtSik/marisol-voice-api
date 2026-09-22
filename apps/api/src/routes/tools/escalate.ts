@@ -67,7 +67,6 @@ export async function handleEscalate(
         customer_phone: normalizedPhone,
         reason: reason ?? null,
         elevenlabs_conversation_id: conversationId.includes('{{') ? null : conversationId || null,
-        status: 'pending',
       })
       .select('id')
       .single();

@@ -121,6 +121,18 @@ describe('/admin/accounts', () => {
     expect(res.status).toBe(400);
   });
 
+  // `role` was dropped in migration 0024; a patch that still carries it must not reach the DB
+  // and get a column error back.
+  it('no longer accepts role on patch', async () => {
+    const res = await call('/admin/accounts/abc', {
+      method: 'PATCH',
+      body: JSON.stringify({ role: 'admin' }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toContain('No updatable fields');
+  });
+
   it('ignores a raw password_hash on patch (not settable directly)', async () => {
     const res = await call('/admin/accounts/abc', {
       method: 'PATCH',

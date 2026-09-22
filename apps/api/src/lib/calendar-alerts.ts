@@ -33,7 +33,6 @@ export async function logGcalFailure(
       .from('audit_log')
       .insert({
         shop_id: shopId,
-        actor: 'system',
         action: 'gcal_failure',
         payload: { ...failure, kind: classifyFailure(failure.message) },
       });
@@ -52,7 +51,7 @@ export async function logGcalMoveConflict(
   try {
     await getSupabase(env)
       .from('audit_log')
-      .insert({ shop_id: shopId, actor: 'system', action: 'gcal_move_conflict', payload });
+      .insert({ shop_id: shopId, action: 'gcal_move_conflict', payload });
   } catch (err) {
     console.error('[gcal-alert] log failed:', err instanceof Error ? err.message : err);
   }

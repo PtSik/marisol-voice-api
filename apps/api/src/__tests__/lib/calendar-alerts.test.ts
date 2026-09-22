@@ -1,5 +1,11 @@
-import { describe, expect, it } from 'bun:test';
-import { alertLines, classifyFailure, runCalendarAlerts } from '../../lib/calendar-alerts';
+import { afterEach, describe, expect, it } from 'bun:test';
+import {
+  alertLines,
+  classifyFailure,
+  logGcalFailure,
+  logGcalMoveConflict,
+  runCalendarAlerts,
+} from '../../lib/calendar-alerts';
 import type { WorkerBindings } from '../../types';
 
 function row(kind: string, shopId = 'shop_1', name = 'Bella Salon') {
@@ -82,4 +88,55 @@ it('does not alert for inactive shops, including old logs after cancellation', (
   for (const status of ['suspended', 'cancelled', 'pending_review', undefined]) {
     expect(alertLines([{ ...row('auth'), shops: { name: 'Salon', status } }])).toEqual([]);
   }
+});
+
+// Migration 0024 drops audit_log.actor. Both writers must stop naming it, or every insert fails
+// against the contracted schema — and these writes are best-effort, so the failure would be a
+// console line and a missing Discord alert, not a visible error.
+describe('audit_log writers after the schema contraction', () => {
+  const realFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+  });
+
+  const env = {
+    SUPABASE_URL: 'https://example.supabase.co',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+  } as WorkerBindings;
+
+  function captureInsert(): { body: () => Record<string, unknown> } {
+    let captured: Record<string, unknown> = {};
+    globalThis.fetch = (async (_url: string, init?: RequestInit) => {
+      const parsed = JSON.parse(String(init?.body));
+      captured = Array.isArray(parsed) ? parsed[0] : parsed;
+      return new Response('[]', { status: 201, headers: { 'content-type': 'application/json' } });
+    }) as unknown as typeof fetch;
+    return { body: () => captured };
+  }
+
+  it('logs a calendar failure without an actor', async () => {
+    const insert = captureInsert();
+    await logGcalFailure(env, 'shop_1', { op: 'busy', message: 'The operation timed out' });
+    expect(insert.body()).toEqual({
+      shop_id: 'shop_1',
+      action: 'gcal_failure',
+      payload: { op: 'busy', message: 'The operation timed out', kind: 'transient' },
+    });
+  });
+
+  it('logs a move conflict without an actor', async () => {
+    const insert = captureInsert();
+    const payload = {
+      booking_id: 'bk_1',
+      calendar_id: 'c_main',
+      start_at: '2026-09-22T15:00:00Z',
+      end_at: '2026-09-22T16:00:00Z',
+    };
+    await logGcalMoveConflict(env, 'shop_1', payload);
+    expect(insert.body()).toEqual({
+      shop_id: 'shop_1',
+      action: 'gcal_move_conflict',
+      payload,
+    });
+  });
 });

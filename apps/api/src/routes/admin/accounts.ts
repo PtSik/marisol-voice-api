@@ -9,7 +9,6 @@ const MUTABLE_FIELDS = new Set([
   'shop_id',
   'lead_id',
   'last_login_at',
-  'role',
   'email_verified',
   'payout_method',
   'payout_handle',

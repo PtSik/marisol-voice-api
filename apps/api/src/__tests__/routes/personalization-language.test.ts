@@ -23,8 +23,6 @@ function shop(overrides: Partial<ShopRow> = {}): ShopRow {
     primary_language: 'en',
     reminders_enabled: false,
     status: 'active',
-    trial_ends_at: null,
-    cancelled_at: null,
     created_at: '2026-01-01T00:00:00Z',
     ...overrides,
   };
