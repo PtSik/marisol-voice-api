@@ -25,7 +25,6 @@ const MUTABLE_FIELDS = new Set([
   'ai_disclosure_text',
   'hours_json',
   'closures_json',
-  'services_json',
   'service_catalog',
   'transfers_enabled',
   'reminders_enabled',
@@ -223,7 +222,7 @@ function validateShopField(key: string, value: unknown): { value: unknown } | { 
       return { value };
     case 'service_catalog':
       if (!validServiceCatalog(value))
-        return { error: 'service_catalog must contain valid fixed-duration services' };
+        return { error: 'service_catalog must contain valid services' };
       return { value };
     case 'transfers_enabled':
     case 'reminders_enabled':

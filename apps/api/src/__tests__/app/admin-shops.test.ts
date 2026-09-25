@@ -56,10 +56,17 @@ const REQUIRED = {
 const PROVISIONING_PAYLOAD = {
   ...REQUIRED,
   transfers_enabled: false,
-  service_catalog: [{ name: 'Full groom', duration_minutes: 90 }],
+  service_catalog: [
+    {
+      name: 'Full groom',
+      duration_minutes: 75,
+      duration_max_minutes: 180,
+      price: 65,
+      price_max: 135,
+    },
+  ],
   timezone: 'America/New_York',
   hours_json: JSON.stringify({ Mon: '9:00am-7:00pm', Sun: 'closed' }),
-  services_json: JSON.stringify(['Full groom — 90 min / $85']),
   staff_json: JSON.stringify([{ id: 'stf_ana', name: 'Ana' }]),
   address: '1 Ocean Dr',
   notes: 'Street parking',

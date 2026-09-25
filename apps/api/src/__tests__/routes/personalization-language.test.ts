@@ -14,7 +14,6 @@ function shop(overrides: Partial<ShopRow> = {}): ShopRow {
     ai_disclosure_text: 'This call is handled by an AI assistant.',
     hours_json: '{}',
     closures_json: '[]',
-    services_json: '[]',
     staff_json: '[]',
     integration: 'none',
     integration_credentials_encrypted: null,
@@ -50,5 +49,36 @@ describe('buildPersonalizationData — primary_language', () => {
     const data = buildPersonalizationData(shop({ primary_language: 'es' }), '+13055550199');
     expect(data.dynamic_variables.shop_name).toBe('Barbarossa Barbershop');
     expect(data.dynamic_variables.caller_phone).toBe('+13055550199');
+  });
+});
+
+describe('buildPersonalizationData — services_summary', () => {
+  // The spoken list and the bookable durations come from one field, so the agent cannot offer a
+  // service book_appointment would then refuse.
+  it('reads the list the caller hears from the service catalog', () => {
+    const data = buildPersonalizationData(
+      shop({
+        service_catalog: [
+          { name: 'Haircut', duration_minutes: 30, price: 35 },
+          {
+            name: 'Full groom',
+            duration_minutes: 75,
+            duration_max_minutes: 180,
+            price: 65,
+            price_max: 135,
+          },
+        ],
+      }),
+      '+13055550199',
+    );
+    expect(data.dynamic_variables.services_summary).toBe(
+      'Haircut — 30 min / $35, Full groom — 75-180 min / $65-135',
+    );
+  });
+
+  it('leaves the summary empty when a shop has no catalog', () => {
+    expect(
+      buildPersonalizationData(shop(), '+13055550199').dynamic_variables.services_summary,
+    ).toBe('');
   });
 });

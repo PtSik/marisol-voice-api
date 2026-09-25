@@ -1,6 +1,7 @@
 import type { Context } from 'hono';
 import { getHoursForDate, isClosed } from '../../lib/hours';
 import { tryToE164 } from '../../lib/normalize';
+import { servicesSummary } from '../../lib/service-catalog';
 import { CALLABLE_STATUSES } from '../../lib/shop-status';
 import { parseStaff, staffSummary } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
@@ -21,7 +22,7 @@ export function buildPersonalizationData(
     shop_id: shop.id,
     shop_name: shop.name,
     hours_summary: formatSchedule(shop, now),
-    services_summary: formatJson(shop.services_json),
+    services_summary: servicesSummary(shop.service_catalog),
     staff_summary: staffSummary(parseStaff(shop.staff_json)),
     // Empty string rather than null: the prompt renders these inline, and "null" spoken aloud is
     // worse than a blank the agent can recognise as "I wasn't given this".
@@ -108,16 +109,6 @@ function formatSchedule(shop: ShopRow, now: Date): string {
   }
 
   return lines.join('\n');
-}
-
-function formatJson(json: string): string {
-  try {
-    const parsed = JSON.parse(json);
-    if (Array.isArray(parsed)) return parsed.join(', ');
-    return String(parsed);
-  } catch {
-    return json;
-  }
 }
 
 export async function handlePersonalization(

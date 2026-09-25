@@ -34,7 +34,6 @@ const SHOP = {
     Sun: '9am-6pm',
   }),
   closures_json: '[]',
-  services_json: 'Full groom',
   service_catalog: [{ name: 'Full groom', duration_minutes: 60 }],
   primary_language: 'en',
   reminders_enabled: false,

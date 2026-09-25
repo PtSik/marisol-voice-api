@@ -1,3 +1,5 @@
+import type { BookableService } from './lib/service-catalog';
+
 export interface ConversationDynamicVariables {
   shop_id: string;
   shop_name: string;
@@ -147,7 +149,7 @@ export interface CalendarRouting {
 
 export interface ShopRow {
   transfers_enabled?: boolean;
-  service_catalog?: Array<{ name: string; duration_minutes: number }> | null;
+  service_catalog?: BookableService[] | null;
   id: string;
   name: string;
   twilio_number: string;
@@ -158,7 +160,6 @@ export interface ShopRow {
   ai_disclosure_text: string;
   hours_json: string;
   closures_json: string;
-  services_json: string;
   staff_json: string;
   integration: string;
   integration_credentials_encrypted: string | null;
