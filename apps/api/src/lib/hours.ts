@@ -47,38 +47,28 @@ function normalizedValue(value: unknown): string {
   return typeof value === 'string' ? value.trim().toLowerCase() : '';
 }
 
-function exactEntryForDay(
-  entries: [string, unknown][],
-  dayIndex: number,
-): [string, unknown] | undefined {
-  return entries.find(([key]) => !key.includes('-') && dayIndexFromName(key) === dayIndex);
+// Every key that answers for this day. Matching is case-insensitive, so `Mon` and `mon` are the
+// same day written twice and land in one pool — which is the point: whether they agree is then a
+// question the caller of this function can ask.
+function valuesForDay(entries: [string, unknown][], dayIndex: number): unknown[] {
+  const exact = entries.filter(([key]) => !key.includes('-') && dayIndexFromName(key) === dayIndex);
+  const pool = exact.length > 0 ? exact : entries.filter(([key]) => keyMatchesDay(key, dayIndex));
+  return pool.map(([, value]) => value);
 }
 
-function rangeValuesForDay(entries: [string, unknown][], dayIndex: number): unknown[] {
-  return entries
-    .filter(([key]) => key.includes('-') && keyMatchesDay(key, dayIndex))
-    .map(([, value]) => value);
-}
-
-// The one rule that decides which key answers for a day, so the roster line the agent reads out
-// and the guard that refuses the booking can never disagree.
+// The one rule that decides what a day says, so the roster line the agent reads out and the guard
+// that refuses the booking can never disagree.
 //
-// A key naming the day outright beats a range covering it, and the key that wins settles the day —
-// "closed" included. Two ranges that cover the day and disagree settle nothing: picking either
-// would hand the answer back to JSON key order, so the day is refused instead. Ranges that say the
-// same thing are not a disagreement; a shop is allowed to spell its week twice.
+// Keys naming the day outright beat ranges covering it, and what wins settles the day — "closed"
+// included. Whatever answers has to answer with one voice: two keys in the same pool saying
+// different things settle nothing, and the day is refused rather than decided by which was typed
+// first. Saying the same thing twice is not a disagreement; a shop may spell its week twice.
 export function hoursForDayIndex(
   hours: Record<string, unknown>,
   dayIndex: number,
 ): { open: number; close: number } | null {
-  const entries = Object.entries(hours);
-  const exact = exactEntryForDay(entries, dayIndex);
-  const ranges = rangeValuesForDay(entries, dayIndex);
-  const value = exact
-    ? exact[1]
-    : new Set(ranges.map(normalizedValue)).size === 1
-      ? ranges[0]
-      : undefined;
+  const values = valuesForDay(Object.entries(hours), dayIndex);
+  const value = new Set(values.map(normalizedValue)).size === 1 ? values[0] : undefined;
   if (typeof value !== 'string') return null;
 
   const [openStr, closeStr] = value.split('-');
@@ -94,8 +84,7 @@ export function hoursForDayIndex(
 export function ambiguousHoursDay(hours: Record<string, unknown>): string | null {
   const entries = Object.entries(hours);
   for (const [dayIndex, dayName] of DAY_NAMES.entries()) {
-    if (exactEntryForDay(entries, dayIndex)) continue;
-    if (new Set(rangeValuesForDay(entries, dayIndex).map(normalizedValue)).size > 1) return dayName;
+    if (new Set(valuesForDay(entries, dayIndex).map(normalizedValue)).size > 1) return dayName;
   }
   return null;
 }

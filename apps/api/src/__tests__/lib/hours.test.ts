@@ -93,7 +93,26 @@ describe('hours — overlapping ranges', () => {
   });
 });
 
+describe('hours — the same day written twice', () => {
+  // 2026-05-25 is a Monday. Case-insensitive matching means these are one day, not two.
+  it('refuses a day whose two spellings disagree, in either key order', () => {
+    expect(getHoursForDate('{"Mon":"9am-5pm","mon":"closed"}', '2026-05-25')).toBeNull();
+    expect(getHoursForDate('{"mon":"closed","Mon":"9am-5pm"}', '2026-05-25')).toBeNull();
+  });
+
+  it('takes two spellings that agree', () => {
+    expect(getHoursForDate('{"Mon":"9am-5pm","mon":"9am-5pm"}', '2026-05-25')).toEqual({
+      open: 540,
+      close: 1020,
+    });
+  });
+});
+
 describe('hours — ambiguousHoursDay', () => {
+  it('names a day whose two spellings disagree', () => {
+    expect(ambiguousHoursDay({ Mon: '9am-5pm', mon: 'closed' })).toBe('Mon');
+  });
+
   it('names the first day two ranges disagree about', () => {
     expect(ambiguousHoursDay({ 'Mon-Fri': '9am-5pm', 'Wed-Sun': 'closed' })).toBe('Wed');
   });

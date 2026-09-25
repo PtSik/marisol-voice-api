@@ -164,6 +164,15 @@ describe('POST /admin/shops', () => {
     ).toBe(400);
   });
 
+  it('refuses a day written twice with two answers', async () => {
+    const res = await postShop({
+      ...REQUIRED,
+      hours_json: { Mon: '9am-5pm', mon: 'closed' },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('Mon');
+  });
+
   it('still accepts ranges that only meet where they agree', async () => {
     const res = await postShop({
       ...REQUIRED,
