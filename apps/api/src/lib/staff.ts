@@ -1,4 +1,4 @@
-import { keyMatchesDay } from './hours';
+import { hoursForDayIndex } from './hours';
 
 export interface StaffMember {
   id: string;
@@ -107,17 +107,10 @@ export function staffSummary(staff: StaffMember[]): string {
     .map((m) => {
       const hours = m.hours;
       if (!hours) return m.name;
-      const days = DAY_ABBR.filter((_, i) => worksOnDayIndex(hours, i));
+      // Resolved exactly as the booking guard resolves it — a summary that offers a day the
+      // guard then refuses sends the caller through a booking that cannot complete.
+      const days = DAY_ABBR.filter((_, i) => hoursForDayIndex(hours, i) !== null);
       return days.length > 0 ? `${m.name} (works ${days.join(', ')})` : m.name;
     })
     .join(', ');
-}
-
-function worksOnDayIndex(hours: Record<string, string>, dayIndex: number): boolean {
-  for (const [key, value] of Object.entries(hours)) {
-    if (!keyMatchesDay(key, dayIndex)) continue;
-    if (value.trim().toLowerCase() === 'closed') continue;
-    return true;
-  }
-  return false;
 }

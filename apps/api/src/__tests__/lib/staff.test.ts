@@ -114,6 +114,18 @@ describe('staff — staffSummary', () => {
   it('never leaks ids', () => {
     expect(staffSummary(parseStaff('[{"name":"Ana"}]'))).not.toContain('stf_');
   });
+
+  // The summary is what the agent offers; validateBookingTime is what then refuses. A day named
+  // here but refused there is a caller talked through a booking that cannot complete.
+  it('drops a day a single-day key closes, even when a range covers it', () => {
+    const staff = parseStaff('[{"name":"Luis","hours":{"Sun":"closed","Sat-Sun":"9am-4pm"}}]');
+    expect(staffSummary(staff)).toBe('Luis (works Sat)');
+  });
+
+  it('drops every day two ranges disagree about', () => {
+    const staff = parseStaff('[{"name":"Luis","hours":{"Mon-Fri":"9am-5pm","Wed-Sun":"closed"}}]');
+    expect(staffSummary(staff)).toBe('Luis (works Mon, Tue)');
+  });
 });
 
 describe('staff — resolveStaffForBooking', () => {

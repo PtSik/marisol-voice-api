@@ -143,6 +143,40 @@ describe('POST /admin/shops', () => {
     expect((await postShop({ ...REQUIRED, is_demo: 'true' })).status).toBe(400);
     expect((await postShop({ ...REQUIRED, primary_language: 'pl' })).status).toBe(400);
   });
+
+  // A week whose Wednesday depends on which key was typed first is not a week, and the two halves
+  // are each individually valid — only reading them together catches it.
+  it('refuses a week two ranges disagree about, on the shop and on a member', async () => {
+    const res = await postShop({
+      ...REQUIRED,
+      hours_json: { 'Mon-Fri': '9am-5pm', 'Wed-Sun': 'closed' },
+    });
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('Wed');
+
+    expect(
+      (
+        await postShop({
+          ...REQUIRED,
+          staff_json: [{ name: 'Ana', hours: { 'Mon-Fri': '9am-5pm', 'Wed-Sun': 'closed' } }],
+        })
+      ).status,
+    ).toBe(400);
+  });
+
+  it('still accepts ranges that only meet where they agree', async () => {
+    const res = await postShop({
+      ...REQUIRED,
+      hours_json: {
+        'Mon-Fri': '9am-5pm',
+        'Wed-Sun': 'closed',
+        Wed: '9am-5pm',
+        Thu: '9am-5pm',
+        Fri: '9am-5pm',
+      },
+    });
+    expect(res.status).toBe(500);
+  });
 });
 
 describe('buildShopCreate', () => {

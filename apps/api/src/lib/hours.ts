@@ -43,6 +43,63 @@ export function parseTime(s: string): number {
   return h * 60 + min;
 }
 
+function normalizedValue(value: unknown): string {
+  return typeof value === 'string' ? value.trim().toLowerCase() : '';
+}
+
+function exactEntryForDay(
+  entries: [string, unknown][],
+  dayIndex: number,
+): [string, unknown] | undefined {
+  return entries.find(([key]) => !key.includes('-') && dayIndexFromName(key) === dayIndex);
+}
+
+function rangeValuesForDay(entries: [string, unknown][], dayIndex: number): unknown[] {
+  return entries
+    .filter(([key]) => key.includes('-') && keyMatchesDay(key, dayIndex))
+    .map(([, value]) => value);
+}
+
+// The one rule that decides which key answers for a day, so the roster line the agent reads out
+// and the guard that refuses the booking can never disagree.
+//
+// A key naming the day outright beats a range covering it, and the key that wins settles the day —
+// "closed" included. Two ranges that cover the day and disagree settle nothing: picking either
+// would hand the answer back to JSON key order, so the day is refused instead. Ranges that say the
+// same thing are not a disagreement; a shop is allowed to spell its week twice.
+export function hoursForDayIndex(
+  hours: Record<string, unknown>,
+  dayIndex: number,
+): { open: number; close: number } | null {
+  const entries = Object.entries(hours);
+  const exact = exactEntryForDay(entries, dayIndex);
+  const ranges = rangeValuesForDay(entries, dayIndex);
+  const value = exact
+    ? exact[1]
+    : new Set(ranges.map(normalizedValue)).size === 1
+      ? ranges[0]
+      : undefined;
+  if (typeof value !== 'string') return null;
+
+  const [openStr, closeStr] = value.split('-');
+  if (!openStr || !closeStr) return null;
+  const open = parseTime(openStr);
+  const close = parseTime(closeStr);
+  return open >= 0 && close > open ? { open, close } : null;
+}
+
+// The first day this config leaves ambiguous, by the rule above. Exported for the admin edge: a
+// shop whose Wednesday depends on which key was typed first is refused at the door rather than
+// stored and argued about later.
+export function ambiguousHoursDay(hours: Record<string, unknown>): string | null {
+  const entries = Object.entries(hours);
+  for (const [dayIndex, dayName] of DAY_NAMES.entries()) {
+    if (exactEntryForDay(entries, dayIndex)) continue;
+    if (new Set(rangeValuesForDay(entries, dayIndex).map(normalizedValue)).size > 1) return dayName;
+  }
+  return null;
+}
+
 export function getHoursForDate(
   hoursJson: string,
   dateStr: string,
@@ -57,22 +114,7 @@ export function getHoursForDate(
   if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return null;
 
   const dayIndex = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
-  const entries = Object.entries(parsed as Record<string, unknown>);
-
-  // A key naming this day outright beats a range that merely covers it, and the key that wins
-  // settles the day — "closed" included. Both rules exist to take the answer away from JSON key
-  // order: {"Sun":"closed","Sat-Sun":"9am-4pm"} used to open on Sunday or not depending on which
-  // key was written first, and nobody writes that order deliberately.
-  const match =
-    entries.find(([key]) => !key.includes('-') && dayIndexFromName(key) === dayIndex) ??
-    entries.find(([key]) => keyMatchesDay(key, dayIndex));
-  if (!match || typeof match[1] !== 'string') return null;
-
-  const [openStr, closeStr] = match[1].split('-');
-  if (!openStr || !closeStr) return null;
-  const open = parseTime(openStr);
-  const close = parseTime(closeStr);
-  return open >= 0 && close > open ? { open, close } : null;
+  return hoursForDayIndex(parsed as Record<string, unknown>, dayIndex);
 }
 
 // A staff member's own hours narrow the shop's, never widen them. No own hours means

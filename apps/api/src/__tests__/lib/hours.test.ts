@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 import {
+  ambiguousHoursDay,
   getHoursForDate,
   isClosed,
   isValidHoursKey,
@@ -63,6 +64,64 @@ describe('hours — getHoursForDate', () => {
 
   it('reads nothing from a key that names no day', () => {
     expect(getHoursForDate('{"Modnay":"9am-7pm"}', '2026-05-25')).toBeNull();
+  });
+});
+
+describe('hours — overlapping ranges', () => {
+  // 2026-05-27 is a Wednesday, covered by both keys.
+  const open = '{"Mon-Fri":"9am-5pm","Wed-Sun":"closed"}';
+  const reversed = '{"Wed-Sun":"closed","Mon-Fri":"9am-5pm"}';
+
+  it('refuses a day two ranges disagree about, in either key order', () => {
+    expect(getHoursForDate(open, '2026-05-27')).toBeNull();
+    expect(getHoursForDate(reversed, '2026-05-27')).toBeNull();
+  });
+
+  it('still answers for the days only one of them covers', () => {
+    expect(getHoursForDate(open, '2026-05-26')).toEqual({ open: 540, close: 1020 });
+    expect(getHoursForDate(open, '2026-05-30')).toBeNull();
+  });
+
+  it('takes ranges that say the same thing as agreement', () => {
+    const twice = '{"Mon-Wed":"9am-5pm","Wed-Fri":"9am-5pm"}';
+    expect(getHoursForDate(twice, '2026-05-27')).toEqual({ open: 540, close: 1020 });
+  });
+
+  it('lets a key naming the day settle what the ranges cannot', () => {
+    const settled = '{"Mon-Fri":"9am-5pm","Wed-Sun":"closed","Wed":"10am-2pm"}';
+    expect(getHoursForDate(settled, '2026-05-27')).toEqual({ open: 600, close: 840 });
+  });
+});
+
+describe('hours — ambiguousHoursDay', () => {
+  it('names the first day two ranges disagree about', () => {
+    expect(ambiguousHoursDay({ 'Mon-Fri': '9am-5pm', 'Wed-Sun': 'closed' })).toBe('Wed');
+  });
+
+  it('passes a week whose ranges do not overlap', () => {
+    expect(ambiguousHoursDay({ 'Mon-Fri': '9am-5pm', Sat: '9am-4pm' })).toBeNull();
+  });
+
+  it('skips a day a single-day key settles and names the next one', () => {
+    expect(ambiguousHoursDay({ 'Mon-Fri': '9am-5pm', 'Wed-Sun': 'closed', Wed: '10am-2pm' })).toBe(
+      'Thu',
+    );
+  });
+
+  it('passes once every overlapping day is named outright', () => {
+    expect(
+      ambiguousHoursDay({
+        'Mon-Fri': '9am-5pm',
+        'Wed-Sun': 'closed',
+        Wed: '10am-2pm',
+        Thu: '10am-2pm',
+        Fri: 'closed',
+      }),
+    ).toBeNull();
+  });
+
+  it('passes ranges that agree', () => {
+    expect(ambiguousHoursDay({ 'Mon-Wed': '9am-5pm', 'Wed-Fri': '9am-5pm' })).toBeNull();
   });
 });
 

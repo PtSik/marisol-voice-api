@@ -6,7 +6,7 @@ import {
   getStaffBusy,
   resolveRouting,
 } from '../../lib/gcal';
-import { isValidHoursKey, parseTime } from '../../lib/hours';
+import { ambiguousHoursDay, isValidHoursKey, parseTime } from '../../lib/hours';
 import { validServiceCatalog } from '../../lib/service-catalog';
 import { parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
@@ -107,6 +107,12 @@ function validateHoursJson(raw: unknown): { value: string } | { error: string } 
         return { error: `hours_json: invalid hours for "${day}": ${JSON.stringify(hrs)}` };
       }
     }
+    // Two ranges disagreeing about one day is a week with no answer, only a key order. Refused
+    // here so it never reaches a caller as whichever half happened to be typed first.
+    const ambiguous = ambiguousHoursDay(parsed as Record<string, unknown>);
+    if (ambiguous) {
+      return { error: `hours_json: two ranges disagree about ${ambiguous}` };
+    }
   } else {
     return { error: 'hours_json must be an object like {"Mon-Fri":"9am-7pm","Sun":"closed"}' };
   }
@@ -140,6 +146,10 @@ function validateStaffJson(raw: unknown): { value: string } | { error: string } 
       if (!isValidHoursValue(hrs)) {
         return { error: `staff_json: invalid hours for ${m.name} on "${day}": ${String(hrs)}` };
       }
+    }
+    const ambiguous = m.hours ? ambiguousHoursDay(m.hours) : null;
+    if (ambiguous) {
+      return { error: `staff_json: two ranges disagree about ${m.name} on ${ambiguous}` };
     }
   }
   return { value: JSON.stringify(members) };
