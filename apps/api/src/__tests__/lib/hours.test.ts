@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   getHoursForDate,
   isClosed,
+  isValidHoursKey,
   localIso,
   offsetLabel,
   spokenTimeLabel,
@@ -45,6 +46,39 @@ describe('hours — getHoursForDate', () => {
   });
   it('returns null for an unlisted day (Sun 2026-05-31)', () => {
     expect(getHoursForDate(hours, '2026-05-31')).toBeNull();
+  });
+
+  // Which key answers for a day used to depend on the order they were written in, which no owner
+  // and no form controls. A day named outright wins, and once a key has answered it is the answer.
+  it('lets a day named outright override a range that covers it', () => {
+    const wed = '{"Mon-Fri":"9am-7pm","Wed":"9am-2pm"}';
+    expect(getHoursForDate(wed, '2026-05-27')).toEqual({ open: 540, close: 840 });
+    const reversed = '{"Wed":"9am-2pm","Mon-Fri":"9am-7pm"}';
+    expect(getHoursForDate(reversed, '2026-05-27')).toEqual({ open: 540, close: 840 });
+  });
+
+  it('keeps a day shut that says closed, whatever a later range claims', () => {
+    expect(getHoursForDate('{"Sun":"closed","Sat-Sun":"9am-4pm"}', '2026-05-31')).toBeNull();
+  });
+
+  it('reads nothing from a key that names no day', () => {
+    expect(getHoursForDate('{"Modnay":"9am-7pm"}', '2026-05-25')).toBeNull();
+  });
+});
+
+describe('hours — isValidHoursKey', () => {
+  // The admin edge refuses on this, because a key the parser cannot match closes the shop that day
+  // in silence — every value check still passes.
+  it('accepts a day and an inclusive range, including one that wraps', () => {
+    for (const key of ['Mon', 'sun', 'Mon-Fri', 'Sat-Sun', 'Fri-Mon']) {
+      expect(isValidHoursKey(key)).toBe(true);
+    }
+  });
+
+  it('refuses a misspelt day, a half-written range and a third bound', () => {
+    for (const key of ['Modnay', 'Monday-Friday', 'Mon-', '', 'Mon-Wed-Fri']) {
+      expect(isValidHoursKey(key)).toBe(false);
+    }
   });
 });
 

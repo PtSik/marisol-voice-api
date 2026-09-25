@@ -11,6 +11,16 @@ export function dayIndexFromName(token: string): number {
 // An hours key is either a single day ("Sun") or an inclusive range ("Mon-Fri"),
 // which may wrap around the week ("Sat-Sun"). Matching is case-insensitive so both
 // {"Tue":…} and {"tue":…} resolve.
+//
+// Exported for the admin edge, which has to refuse what this cannot match. Every value check passes
+// a key like "Modnay", and the shop is then shut on Mondays for good — the agent turns bookings
+// away and tells callers it is closed, with nothing anywhere saying why.
+export function isValidHoursKey(key: string): boolean {
+  const parts = key.split('-');
+  if (parts.length > 2) return false;
+  return parts.every((part) => dayIndexFromName(part) >= 0);
+}
+
 export function keyMatchesDay(key: string, dayIndex: number): boolean {
   const [firstDay, lastDay] = key.split('-');
   if (!firstDay) return false;
@@ -44,27 +54,25 @@ export function getHoursForDate(
     return null;
   }
 
-  if (typeof parsed === 'string') {
-    const [openStr, closeStr] = parsed.split('-');
-    if (!openStr || !closeStr) return null;
-    const open = parseTime(openStr);
-    const close = parseTime(closeStr);
-    return open >= 0 && close > open ? { open, close } : null;
-  }
-
   if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return null;
 
   const dayIndex = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
+  const entries = Object.entries(parsed as Record<string, unknown>);
 
-  for (const [key, value] of Object.entries(parsed as Record<string, string>)) {
-    if (!keyMatchesDay(key, dayIndex)) continue;
-    const [openStr, closeStr] = value.split('-');
-    if (!openStr || !closeStr) continue;
-    const open = parseTime(openStr);
-    const close = parseTime(closeStr);
-    if (open >= 0 && close > open) return { open, close };
-  }
-  return null;
+  // A key naming this day outright beats a range that merely covers it, and the key that wins
+  // settles the day — "closed" included. Both rules exist to take the answer away from JSON key
+  // order: {"Sun":"closed","Sat-Sun":"9am-4pm"} used to open on Sunday or not depending on which
+  // key was written first, and nobody writes that order deliberately.
+  const match =
+    entries.find(([key]) => !key.includes('-') && dayIndexFromName(key) === dayIndex) ??
+    entries.find(([key]) => keyMatchesDay(key, dayIndex));
+  if (!match || typeof match[1] !== 'string') return null;
+
+  const [openStr, closeStr] = match[1].split('-');
+  if (!openStr || !closeStr) return null;
+  const open = parseTime(openStr);
+  const close = parseTime(closeStr);
+  return open >= 0 && close > open ? { open, close } : null;
 }
 
 // A staff member's own hours narrow the shop's, never widen them. No own hours means

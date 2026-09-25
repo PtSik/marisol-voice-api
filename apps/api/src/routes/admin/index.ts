@@ -6,7 +6,7 @@ import {
   getStaffBusy,
   resolveRouting,
 } from '../../lib/gcal';
-import { parseTime } from '../../lib/hours';
+import { isValidHoursKey, parseTime } from '../../lib/hours';
 import { validServiceCatalog } from '../../lib/service-catalog';
 import { parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
@@ -96,10 +96,13 @@ function validateHoursJson(raw: unknown): { value: string } | { error: string } 
   } catch {
     return { error: 'hours_json is not valid JSON' };
   }
-  if (typeof parsed === 'string') {
-    if (!isValidHoursValue(parsed)) return { error: `hours_json: invalid hours "${parsed}"` };
-  } else if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     for (const [day, hrs] of Object.entries(parsed)) {
+      // The key matters as much as the value: nothing downstream can match a day it cannot name,
+      // so a misspelt one is a day the shop is shut on with no error to show for it.
+      if (!isValidHoursKey(day)) {
+        return { error: `hours_json: "${day}" is not a day or a range of days` };
+      }
       if (!isValidHoursValue(hrs)) {
         return { error: `hours_json: invalid hours for "${day}": ${JSON.stringify(hrs)}` };
       }
@@ -131,6 +134,9 @@ function validateStaffJson(raw: unknown): { value: string } | { error: string } 
   }
   for (const m of members) {
     for (const [day, hrs] of Object.entries(m.hours ?? {})) {
+      if (!isValidHoursKey(day)) {
+        return { error: `staff_json: "${day}" is not a day or a range of days` };
+      }
       if (!isValidHoursValue(hrs)) {
         return { error: `staff_json: invalid hours for ${m.name} on "${day}": ${String(hrs)}` };
       }

@@ -128,6 +128,13 @@ describe('POST /admin/shops', () => {
   // opening times the agent cannot read.
   it('rejects on create the same malformed values PATCH rejects', async () => {
     expect((await postShop({ ...REQUIRED, hours_json: { Sat: '9-3' } })).status).toBe(400);
+    // A key nothing can match shuts the shop that day and says nothing. Caught here or not at all.
+    expect((await postShop({ ...REQUIRED, hours_json: { Modnay: '9am-5pm' } })).status).toBe(400);
+    expect((await postShop({ ...REQUIRED, hours_json: '9am-5pm' })).status).toBe(400);
+    expect(
+      (await postShop({ ...REQUIRED, staff_json: [{ name: 'Ana', hours: { Tues: '9am-5pm' } }] }))
+        .status,
+    ).toBe(400);
     expect((await postShop({ ...REQUIRED, closures_json: ['not-a-date'] })).status).toBe(400);
     expect(
       (await postShop({ ...REQUIRED, calendar_routing: { staff_calendars: {} } })).status,
