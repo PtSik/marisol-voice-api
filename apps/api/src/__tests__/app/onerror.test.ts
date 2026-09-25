@@ -9,6 +9,7 @@ import type { WorkerBindings } from '../../types';
 const env = {
   SUPABASE_URL: '',
   SUPABASE_SERVICE_ROLE_KEY: '',
+  TOOLS_WEBHOOK_SECRET: 'tool-secret',
   ADMIN_API_KEYS: 'testkey',
 } as unknown as WorkerBindings;
 const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
@@ -21,7 +22,7 @@ describe('app.onError', () => {
   it('returns a tool-shaped 200 when a /tools/* handler throws', async () => {
     const res = await request('/tools/check_availability', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Tool-Secret': 'tool-secret' },
       body: '{}',
     });
     expect(res.status).toBe(200);

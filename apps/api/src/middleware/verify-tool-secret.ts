@@ -8,13 +8,15 @@ export interface ToolSecretBindings {
 export function verifyToolSecret(): MiddlewareHandler<{ Bindings: ToolSecretBindings }> {
   return async (c, next) => {
     const secret = c.env.TOOLS_WEBHOOK_SECRET;
-    // Fail open when unconfigured so the secret can be rolled out to the worker
-    // before the ElevenLabs tool config sends the header — but make it loud.
+    // Fail closed: an unset secret is a deploy mistake, not a licence to serve tool calls
+    // unauthenticated. The binding is optional in the type, so only this check stops a worker
+    // deployed without it from answering anyone who finds the URL.
     if (!secret) {
-      console.warn(
-        '[verifyToolSecret] TOOLS_WEBHOOK_SECRET unset — tool webhooks are UNAUTHENTICATED',
+      console.error('[verifyToolSecret] TOOLS_WEBHOOK_SECRET unset — refusing tool webhooks');
+      return c.json(
+        { result: 'Sorry, I cannot reach the booking system right now.', success: false },
+        503,
       );
-      return next();
     }
     const provided = c.req.header('X-Tool-Secret') ?? '';
     if (!timingSafeEqual(provided, secret)) {

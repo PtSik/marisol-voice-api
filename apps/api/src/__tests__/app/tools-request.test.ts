@@ -7,6 +7,7 @@ import type { WorkerBindings } from '../../types';
 const env = {
   SUPABASE_URL: 'https://db.test',
   SUPABASE_SERVICE_ROLE_KEY: 'service-key',
+  TOOLS_WEBHOOK_SECRET: 'tool-secret',
   // SMS_ENABLED unset: sendSms refuses before any network or preference read, as in production.
 } as unknown as WorkerBindings;
 const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
@@ -96,7 +97,7 @@ async function tool(name: string, body: unknown, headers: Record<string, string>
   const res = await worker.fetch(
     new Request(`https://api.test/tools/${name}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
+      headers: { 'Content-Type': 'application/json', 'X-Tool-Secret': 'tool-secret', ...headers },
       body: typeof body === 'string' ? body : JSON.stringify(body),
     }),
     env,
