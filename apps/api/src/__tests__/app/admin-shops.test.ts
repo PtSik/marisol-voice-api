@@ -49,6 +49,7 @@ const REQUIRED = {
   escalation_phone: '+13055550111',
   owner_escalation_phone: '+13055550111',
   owner_email: 'owner@example.com',
+  elevenlabs_agent_id: 'agent_123',
 };
 
 // The exact key set landing's buildShopPayload sends. If create ever stops accepting one of these,
@@ -81,6 +82,15 @@ describe('POST /admin/shops', () => {
 
   it('accepts the payload landing provisioning sends (reaches the DB)', async () => {
     expect((await postShop(PROVISIONING_PAYLOAD)).status).toBe(500);
+  });
+
+  // There is no template agent to fall back on any more. A shop created without one would be a
+  // number that answers and hangs up, discovered by whoever calls it first.
+  it('refuses a create with no agent to answer with', async () => {
+    const { elevenlabs_agent_id, ...withoutAgent } = REQUIRED;
+    const res = await postShop(withoutAgent);
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toContain('elevenlabs_agent_id');
   });
 
   it('names the missing required field', async () => {

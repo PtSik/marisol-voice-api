@@ -214,7 +214,6 @@ export interface WorkerBindings {
   SUPABASE_SERVICE_ROLE_KEY: string;
   ELEVENLABS_WEBHOOK_SECRET: string;
   TOOLS_WEBHOOK_SECRET?: string;
-  ELEVENLABS_TEMPLATE_AGENT_ID: string;
   ELEVENLABS_API_KEY: string;
   TWILIO_ACCOUNT_SID: string;
   TWILIO_AUTH_TOKEN: string;

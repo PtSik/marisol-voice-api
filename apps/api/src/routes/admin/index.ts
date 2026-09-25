@@ -53,6 +53,9 @@ const REQUIRED_CREATE_FIELDS = [
   'escalation_phone',
   'owner_escalation_phone',
   'owner_email',
+  // Required since the template-agent fallback went: without it the shop is created happily and the
+  // fault only shows up as a refused call. Provisioning already picks one per vertical.
+  'elevenlabs_agent_id',
 ];
 
 // Undefined is valid — the column defaults to 'en', so provisioning may simply omit it.
