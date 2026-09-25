@@ -4,7 +4,7 @@ import { verifyToolSecret } from '../../middleware/verify-tool-secret';
 
 function makeApp() {
   const app = new Hono<{ Bindings: { TOOLS_WEBHOOK_SECRET?: string } }>();
-  app.use('*', verifyToolSecret());
+  app.use('*', verifyToolSecret);
   app.post('/tools/x', (c) => c.json({ result: 'ok', success: true }));
   return app;
 }

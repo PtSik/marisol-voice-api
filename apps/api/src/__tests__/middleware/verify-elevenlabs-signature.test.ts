@@ -19,69 +19,87 @@ async function buildHmac(secret: string, timestamp: number, body: string): Promi
     .join('');
 }
 
-function makeApp(secret: string) {
-  const app = new Hono();
-  app.use('*', verifyElevenLabsSignature(secret));
+const ENV = { ELEVENLABS_WEBHOOK_SECRET: WEBHOOK_SECRET };
+
+function makeApp() {
+  const app = new Hono<{ Bindings: typeof ENV }>();
+  app.use('*', verifyElevenLabsSignature);
   app.post('/test', (c) => c.json({ ok: true }));
   return app;
 }
 
 describe('verifyElevenLabsSignature middleware', () => {
   it('passes a valid signature', async () => {
-    const app = makeApp(WEBHOOK_SECRET);
+    const app = makeApp();
     const body = JSON.stringify({ event: 'test' });
     const timestamp = Math.floor(Date.now() / 1000);
     const hmac = await buildHmac(WEBHOOK_SECRET, timestamp, body);
-    const res = await app.request('/test', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'ElevenLabs-Signature': `t=${timestamp},v0=${hmac}`,
+    const res = await app.request(
+      '/test',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ElevenLabs-Signature': `t=${timestamp},v0=${hmac}`,
+        },
+        body,
       },
-      body,
-    });
+      ENV,
+    );
     expect(res.status).toBe(200);
   });
 
   it('returns 401 for invalid HMAC', async () => {
-    const app = makeApp(WEBHOOK_SECRET);
+    const app = makeApp();
     const body = JSON.stringify({ event: 'test' });
     const timestamp = Math.floor(Date.now() / 1000);
-    const res = await app.request('/test', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'ElevenLabs-Signature': `t=${timestamp},v0=deadbeefdeadbeef`,
+    const res = await app.request(
+      '/test',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ElevenLabs-Signature': `t=${timestamp},v0=deadbeefdeadbeef`,
+        },
+        body,
       },
-      body,
-    });
+      ENV,
+    );
     expect(res.status).toBe(401);
   });
 
   it('returns 401 when timestamp is older than 1800 seconds', async () => {
-    const app = makeApp(WEBHOOK_SECRET);
+    const app = makeApp();
     const body = JSON.stringify({ event: 'test' });
     const oldTimestamp = Math.floor(Date.now() / 1000) - 1801;
     const hmac = await buildHmac(WEBHOOK_SECRET, oldTimestamp, body);
-    const res = await app.request('/test', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'ElevenLabs-Signature': `t=${oldTimestamp},v0=${hmac}`,
+    const res = await app.request(
+      '/test',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'ElevenLabs-Signature': `t=${oldTimestamp},v0=${hmac}`,
+        },
+        body,
       },
-      body,
-    });
+      ENV,
+    );
     expect(res.status).toBe(401);
   });
 
   it('returns 401 when ElevenLabs-Signature header is missing', async () => {
-    const app = makeApp(WEBHOOK_SECRET);
+    const app = makeApp();
     const body = JSON.stringify({ event: 'test' });
-    const res = await app.request('/test', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
+    const res = await app.request(
+      '/test',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      },
+      ENV,
+    );
     expect(res.status).toBe(401);
   });
 });

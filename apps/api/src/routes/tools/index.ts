@@ -14,7 +14,7 @@ import { handleRescheduleAppointment } from './reschedule-appointment';
 
 export const toolRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
-toolRoutes.use('*', verifyToolSecret());
+toolRoutes.use('*', verifyToolSecret);
 
 const cleanVar = (v: string | undefined): string => (v && !v.includes('{{') ? v.trim() : '');
 

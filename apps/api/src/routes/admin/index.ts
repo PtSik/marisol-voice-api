@@ -247,7 +247,7 @@ function validateShopField(key: string, value: unknown): { value: unknown } | { 
 
 export const adminRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
-adminRoutes.use('*', adminAuth());
+adminRoutes.use('*', adminAuth);
 
 adminRoutes.route('/accounts', accountRoutes);
 adminRoutes.route('/referrals', referralRoutes);

@@ -6,14 +6,6 @@ import { handlePostCall } from './post-call';
 
 export const webhookRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
-webhookRoutes.post(
-  '/personalization',
-  (c, next) => verifyElevenLabsSignature(c.env.ELEVENLABS_WEBHOOK_SECRET)(c, next),
-  handlePersonalization,
-);
+webhookRoutes.post('/personalization', verifyElevenLabsSignature, handlePersonalization);
 
-webhookRoutes.post(
-  '/post-call',
-  (c, next) => verifyElevenLabsSignature(c.env.ELEVENLABS_WEBHOOK_SECRET)(c, next),
-  handlePostCall,
-);
+webhookRoutes.post('/post-call', verifyElevenLabsSignature, handlePostCall);
