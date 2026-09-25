@@ -2,15 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { serviceDuration, servicesSummary, validServiceCatalog } from '../../lib/service-catalog';
 
 const FIXED = [{ name: 'Small dog groom', duration_minutes: 60 }];
-const SPREAD = [
-  {
-    name: 'Full groom',
-    duration_minutes: 75,
-    duration_max_minutes: 180,
-    price: 65,
-    price_max: 135,
-  },
-];
+const SPREAD = [{ name: 'Full groom', duration_minutes: 180, price: 65, price_max: 135 }];
 
 describe('server-owned service durations', () => {
   it('resolves the configured duration and never guesses for an unknown service', () => {
@@ -19,7 +11,7 @@ describe('server-owned service durations', () => {
     expect(serviceDuration(FIXED, undefined)).toBeNull();
   });
 
-  it('books the top of a spread, so a long job cannot overlap the next caller', () => {
+  it('books the one duration the catalog holds, spread price or not', () => {
     expect(serviceDuration(SPREAD, 'Full groom')).toBe(180);
   });
 
@@ -30,25 +22,23 @@ describe('server-owned service durations', () => {
     expect(validServiceCatalog([...FIXED, { ...FIXED[0], name: 'SMALL DOG GROOM' }])).toBe(false);
   });
 
-  it('refuses bounds that cannot be spoken as a range', () => {
+  it('refuses a price ceiling that cannot be spoken as a range', () => {
     const upper = (over: Record<string, unknown>) => [{ ...SPREAD[0], ...over }];
-    expect(validServiceCatalog(upper({ duration_max_minutes: 30 }))).toBe(false);
     expect(validServiceCatalog(upper({ price_max: 10 }))).toBe(false);
     expect(validServiceCatalog(upper({ price: undefined }))).toBe(false);
-    expect(validServiceCatalog(upper({ duration_max_minutes: 75.5 }))).toBe(false);
   });
 });
 
 describe('servicesSummary', () => {
-  it('speaks a fixed service as one number and a spread as a range', () => {
+  it('speaks one duration, and a price range when the shop quotes one', () => {
     expect(servicesSummary(FIXED)).toBe('Small dog groom — 60 min');
-    expect(servicesSummary(SPREAD)).toBe('Full groom — 75-180 min / $65-135');
+    expect(servicesSummary(SPREAD)).toBe('Full groom — 180 min / $65-135');
   });
 
-  it('collapses an upper bound equal to its lower bound', () => {
+  it('collapses a price ceiling equal to its floor', () => {
     expect(
-      servicesSummary([{ name: 'Buzz cut', duration_minutes: 20, duration_max_minutes: 20 }]),
-    ).toBe('Buzz cut — 20 min');
+      servicesSummary([{ name: 'Buzz cut', duration_minutes: 20, price: 25, price_max: 25 }]),
+    ).toBe('Buzz cut — 20 min / $25');
   });
 
   it('joins services with commas and a service’s own fields with a slash', () => {

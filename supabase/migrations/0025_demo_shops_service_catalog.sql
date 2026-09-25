@@ -9,9 +9,11 @@
 -- make `fetchDynamicVariables` throw and the token endpoint answer 502, taking the demo on
 -- callmarisol.com down with it.
 --
--- Transcribed by hand from each row's `services_json`, not parsed: the durations and prices below
--- are the same numbers the demo already speaks. Barbershop services are flat; grooming quotes a
--- spread, which is why the catalog carries optional upper bounds at all.
+-- Transcribed by hand from each row's `services_json`, not parsed. Durations are the slot to
+-- reserve, so a grooming service that ran "75-180 min" takes 180 here — the longest the job runs,
+-- which is also the honest answer to "when can I collect". Prices keep their spread: nothing
+-- computes with them, and a groomer cannot quote one figure for a job that is $65 on a Yorkie and
+-- $135 on a matted Bernedoodle.
 --
 -- STAGED: run this BEFORE deploying the worker that reads the summary from `service_catalog`.
 -- Between the two, these shops would answer with an empty service list.
@@ -31,14 +33,14 @@ UPDATE shops SET service_catalog = '[
 WHERE id = '4d5815c1-c77a-43cc-8df4-1b0b7be6c896';
 
 UPDATE shops SET service_catalog = '[
-  {"name":"Bath & Brush","duration_minutes":45,"duration_max_minutes":90,"price":45,"price_max":85},
-  {"name":"Bath & Tidy","duration_minutes":60,"duration_max_minutes":120,"price":55,"price_max":95},
-  {"name":"Full Groom","duration_minutes":75,"duration_max_minutes":180,"price":65,"price_max":135},
-  {"name":"Doodle & Poodle Full Groom","duration_minutes":120,"duration_max_minutes":240,"price":95,"price_max":175},
-  {"name":"Puppy''s First Groom","duration_minutes":45,"duration_max_minutes":60,"price":45},
-  {"name":"De-Shedding Treatment","duration_minutes":60,"duration_max_minutes":120,"price":55,"price_max":95},
-  {"name":"De-Matting","duration_minutes":30,"duration_max_minutes":60,"price":25,"price_max":60},
-  {"name":"Flea & Tick Bath","duration_minutes":60,"duration_max_minutes":90,"price":65,"price_max":95},
+  {"name":"Bath & Brush","duration_minutes":90,"price":45,"price_max":85},
+  {"name":"Bath & Tidy","duration_minutes":120,"price":55,"price_max":95},
+  {"name":"Full Groom","duration_minutes":180,"price":65,"price_max":135},
+  {"name":"Doodle & Poodle Full Groom","duration_minutes":240,"price":95,"price_max":175},
+  {"name":"Puppy''s First Groom","duration_minutes":60,"price":45},
+  {"name":"De-Shedding Treatment","duration_minutes":120,"price":55,"price_max":95},
+  {"name":"De-Matting","duration_minutes":60,"price":25,"price_max":60},
+  {"name":"Flea & Tick Bath","duration_minutes":90,"price":65,"price_max":95},
   {"name":"Nail Trim","duration_minutes":15,"price":15},
   {"name":"Nail Grind","duration_minutes":20,"price":20},
   {"name":"Teeth Brushing","duration_minutes":10,"price":12},

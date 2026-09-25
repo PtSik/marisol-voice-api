@@ -60,19 +60,13 @@ describe('buildPersonalizationData — services_summary', () => {
       shop({
         service_catalog: [
           { name: 'Haircut', duration_minutes: 30, price: 35 },
-          {
-            name: 'Full groom',
-            duration_minutes: 75,
-            duration_max_minutes: 180,
-            price: 65,
-            price_max: 135,
-          },
+          { name: 'Full groom', duration_minutes: 180, price: 65, price_max: 135 },
         ],
       }),
       '+13055550199',
     );
     expect(data.dynamic_variables.services_summary).toBe(
-      'Haircut — 30 min / $35, Full groom — 75-180 min / $65-135',
+      'Haircut — 30 min / $35, Full groom — 180 min / $65-135',
     );
   });
 
