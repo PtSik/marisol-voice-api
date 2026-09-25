@@ -13,11 +13,16 @@ const MONDAY = '2099-06-15';
 const TUESDAY = '2099-06-16';
 
 describe('staff — parseStaff', () => {
-  it('reads the legacy string[] shape', () => {
-    expect(parseStaff('["Ana","Luis"]')).toEqual([
+  it('derives an id for an entry stored without one', () => {
+    expect(parseStaff('[{"name":"Ana"},{"name":"Luis"}]')).toEqual([
       { id: 'stf_ana', name: 'Ana' },
       { id: 'stf_luis', name: 'Luis' },
     ]);
+  });
+
+  // Migration 0027 converted the last rows holding it, so this shape is now simply not a roster.
+  it('ignores the retired string[] shape rather than half-reading it', () => {
+    expect(parseStaff('["Ana","Luis"]')).toEqual([]);
   });
 
   it('keeps a stored id when the name changes', () => {
@@ -34,7 +39,10 @@ describe('staff — parseStaff', () => {
   });
 
   it('disambiguates two members with the same name', () => {
-    expect(parseStaff('["Ana","Ana"]').map((m) => m.id)).toEqual(['stf_ana', 'stf_ana-2']);
+    expect(parseStaff('[{"name":"Ana"},{"name":"Ana"}]').map((m) => m.id)).toEqual([
+      'stf_ana',
+      'stf_ana-2',
+    ]);
   });
 
   it('returns an empty list for malformed json', () => {
@@ -45,7 +53,7 @@ describe('staff — parseStaff', () => {
 
 describe('staff — findStaff', () => {
   it('matches case-insensitively', () => {
-    expect(findStaff('["Ana"]', 'ana')?.name).toBe('Ana');
+    expect(findStaff('[{"name":"Ana"}]', 'ana')?.name).toBe('Ana');
   });
   it('ignores a schedule bracket the agent echoed back', () => {
     expect(findStaff('[{"name":"Luis","hours":{"Tue":"9am-5pm"}}]', 'Luis (works Tue)')?.name).toBe(
@@ -53,14 +61,14 @@ describe('staff — findStaff', () => {
     );
   });
   it('returns undefined for an unknown or missing name', () => {
-    expect(findStaff('["Ana"]', 'Luis')).toBeUndefined();
-    expect(findStaff('["Ana"]', undefined)).toBeUndefined();
+    expect(findStaff('[{"name":"Ana"}]', 'Luis')).toBeUndefined();
+    expect(findStaff('[{"name":"Ana"}]', undefined)).toBeUndefined();
   });
 });
 
 describe('staff — getStaffHoursForDate', () => {
   it('inherits the shop hours when the member has none', () => {
-    const [ana] = parseStaff('["Ana"]');
+    const [ana] = parseStaff('[{"name":"Ana"}]');
     expect(getStaffHoursForDate(shop, ana, MONDAY)).toEqual({ open: 540, close: 1140 });
   });
 
@@ -86,23 +94,25 @@ describe('staff — getStaffHoursForDate', () => {
 
   it('returns null when the shop itself is closed', () => {
     const closedShop = { ...shop, hours_json: '{"Mon":"closed"}' } as ShopRow;
-    const [ana] = parseStaff('["Ana"]');
+    const [ana] = parseStaff('[{"name":"Ana"}]');
     expect(getStaffHoursForDate(closedShop, ana, MONDAY)).toBeNull();
   });
 });
 
 describe('staff — staffSummary', () => {
   it('sends names only when nobody has a custom schedule', () => {
-    expect(staffSummary(parseStaff('["Ana","Luis"]'))).toBe('Ana, Luis');
+    expect(staffSummary(parseStaff('[{"name":"Ana"},{"name":"Luis"}]'))).toBe('Ana, Luis');
   });
 
   it('annotates working days for members with their own hours', () => {
-    const staff = parseStaff('["Ana",{"name":"Luis","hours":{"Tue":"9am-5pm","Thu":"9am-5pm"}}]');
+    const staff = parseStaff(
+      '[{"name":"Ana"},{"name":"Luis","hours":{"Tue":"9am-5pm","Thu":"9am-5pm"}}]',
+    );
     expect(staffSummary(staff)).toBe('Ana, Luis (works Tue, Thu)');
   });
 
   it('never leaks ids', () => {
-    expect(staffSummary(parseStaff('["Ana"]'))).not.toContain('stf_');
+    expect(staffSummary(parseStaff('[{"name":"Ana"}]'))).not.toContain('stf_');
   });
 });
 

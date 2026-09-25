@@ -130,7 +130,10 @@ describe('POST /admin/shops', () => {
 
 describe('buildShopCreate', () => {
   it('canonicalises staff so a shop has stable ids from its first second', () => {
-    const built = buildShopCreate({ ...REQUIRED, staff_json: ['Ana', 'Luis'] });
+    const built = buildShopCreate({
+      ...REQUIRED,
+      staff_json: [{ name: 'Ana' }, { name: 'Luis' }],
+    });
     expect('error' in built).toBe(false);
     if ('error' in built) return;
     const staff = JSON.parse(built.row.staff_json as string) as Array<{ id: string; name: string }>;
@@ -210,12 +213,14 @@ describe('PATCH /admin/shops/:id', () => {
     expect(body.error).toContain('staff_json');
   });
 
-  it('accepts both the legacy and the object staff shape (reaches the DB)', async () => {
-    expect((await patchShop({ staff_json: ['Ana', 'Luis'] })).status).toBe(500);
+  it('takes the stored staff shape and refuses a bare name list', async () => {
     expect(
       (await patchShop({ staff_json: [{ id: 'stf_a', name: 'Ana', hours: { Tue: '9am-5pm' } }] }))
         .status,
     ).toBe(500);
+    const legacy = await patchShop({ staff_json: ['Ana', 'Luis'] });
+    expect(legacy.status).toBe(400);
+    expect(((await legacy.json()) as { error: string }).error).toContain('not a bare string');
   });
 
   it('rejects calendar_routing without a write calendar', async () => {
@@ -305,13 +310,13 @@ describe('buildShopUpdate', () => {
   // Anything outside the CHECK in migration 0021 is a shop whose number the call lookups no longer
   // recognise: the line answers 404 and nothing in the logs says the status is why.
   it('lets every status the schema allows through', () => {
-    for (const status of ['active', 'cancelled', 'suspended', 'demo']) {
+    for (const status of ['active', 'cancelled', 'suspended']) {
       expect(buildShopUpdate({ status })).toEqual({ update: { status } });
     }
   });
 
   it('rejects a status the schema would refuse', () => {
-    for (const status of ['trial', 'Demo', 'paused', '', 1, null]) {
+    for (const status of ['trial', 'demo', 'Demo', 'paused', '', 1, null]) {
       expect('error' in buildShopUpdate({ status })).toBe(true);
     }
   });

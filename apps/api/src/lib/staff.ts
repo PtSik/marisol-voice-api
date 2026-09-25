@@ -28,9 +28,9 @@ function parseHours(raw: unknown): Record<string, string> | undefined {
   return Object.keys(out).length > 0 ? out : undefined;
 }
 
-// The single normaliser for shops.staff_json. Accepts the legacy `string[]` shape so
-// existing shops keep working without a data migration; legacy ids are derived from the
-// name (deterministic — this runs per request and must agree across tool calls).
+// The single normaliser for shops.staff_json. Every row carries `[{id, name, hours?}]` since
+// migration 0027; an entry that arrives without an id still gets one derived from the name
+// (deterministic — this runs per request and must agree across tool calls).
 export function parseStaff(staffJson: string): StaffMember[] {
   let parsed: unknown;
   try {
@@ -47,9 +47,7 @@ export function parseStaff(staffJson: string): StaffMember[] {
     let id: string | undefined;
     let hours: Record<string, string> | undefined;
 
-    if (typeof entry === 'string') {
-      name = entry.trim();
-    } else if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
       const e = entry as Record<string, unknown>;
       name = typeof e.name === 'string' ? e.name.trim() : '';
       id = typeof e.id === 'string' && e.id.trim() ? e.id.trim() : undefined;

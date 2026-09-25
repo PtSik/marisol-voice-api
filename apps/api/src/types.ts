@@ -195,7 +195,6 @@ export interface BookingRow {
   cancelled_via: string | null;
   gcal_sync_pending: boolean;
   idempotency_key: string | null;
-  confirmation_code: string | null;
   language: string;
   reminder_sent_at: string | null;
   sms_consent_at: string | null;
