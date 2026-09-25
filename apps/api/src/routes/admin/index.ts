@@ -107,8 +107,9 @@ function validateHoursJson(raw: unknown): { value: string } | { error: string } 
   return { value: JSON.stringify(parsed) };
 }
 
-// Staff accepts both the legacy `["Ana"]` shape and `[{id,name,hours?}]`; either way it is
-// canonicalised through parseStaff so every stored member ends up with a stable id.
+// Staff is `[{id,name,hours?}]`, canonicalised through parseStaff so every stored member ends up
+// with a stable id. The bare-name shape is refused rather than coerced: it used to parse, and a
+// roster that silently came back empty books whoever the caller names without checking a schedule.
 function validateStaffJson(raw: unknown): { value: string } | { error: string } {
   let parsed: unknown;
   try {
