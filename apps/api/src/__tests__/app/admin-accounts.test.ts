@@ -3,30 +3,7 @@ import worker from '../../index';
 import { hashPassword } from '../../lib/password';
 import { buildAccountUpdate } from '../../routes/admin/accounts';
 import type { WorkerBindings } from '../../types';
-
-// Same trick as admin-shops.test.ts: an empty SUPABASE_URL makes the DB call throw, so a
-// request that reaches Supabase surfaces as 500 — that separates "passed validation" from
-// "blocked at validation" (400) without a live database.
-const env = {
-  SUPABASE_URL: '',
-  SUPABASE_SERVICE_ROLE_KEY: '',
-  ADMIN_API_KEYS: 'testkey',
-} as unknown as WorkerBindings;
-const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
-
-function call(path: string, init: RequestInit = {}, auth = true) {
-  return worker.fetch(
-    new Request(`https://example.com${path}`, {
-      ...init,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(auth ? { Authorization: 'Bearer testkey' } : {}),
-      },
-    }),
-    env,
-    ctx,
-  );
-}
+import { adminCall as call, ctx } from '../helpers';
 
 describe('/admin/accounts', () => {
   it('requires admin auth', async () => {

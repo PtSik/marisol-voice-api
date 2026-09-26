@@ -1,47 +1,13 @@
 import { describe, expect, it } from 'bun:test';
-import worker from '../../index';
 import { buildShopCreate, buildShopUpdate } from '../../routes/admin';
-import type { CalendarRouting, WorkerBindings } from '../../types';
+import type { CalendarRouting } from '../../types';
+import { adminCall } from '../helpers';
 
-// Empty SUPABASE_URL makes the DB call throw, so a request that reaches Supabase
-// surfaces as a 500 — that lets us tell "passed validation" (reached DB → 500) from
-// "blocked at validation" (400) without a live database.
-const env = {
-  SUPABASE_URL: '',
-  SUPABASE_SERVICE_ROLE_KEY: '',
-  ADMIN_API_KEYS: 'testkey',
-} as unknown as WorkerBindings;
-const ctx = { waitUntil() {}, passThroughOnException() {} } as unknown as ExecutionContext;
+const patchShop = (body: unknown, auth = true) =>
+  adminCall('/admin/shops/abc', { method: 'PATCH', body: JSON.stringify(body) }, auth);
 
-function patchShop(body: unknown, auth = true) {
-  return worker.fetch(
-    new Request('https://example.com/admin/shops/abc', {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(auth ? { Authorization: 'Bearer testkey' } : {}),
-      },
-      body: JSON.stringify(body),
-    }),
-    env,
-    ctx,
-  );
-}
-
-function postShop(body: unknown, auth = true) {
-  return worker.fetch(
-    new Request('https://example.com/admin/shops', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(auth ? { Authorization: 'Bearer testkey' } : {}),
-      },
-      body: JSON.stringify(body),
-    }),
-    env,
-    ctx,
-  );
-}
+const postShop = (body: unknown, auth = true) =>
+  adminCall('/admin/shops', { method: 'POST', body: JSON.stringify(body) }, auth);
 
 const REQUIRED = {
   name: 'Salon',
