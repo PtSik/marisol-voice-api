@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'bun:test';
-import { serviceDuration, servicesSummary, validServiceCatalog } from '../../lib/service-catalog';
+import {
+  availabilityDuration,
+  serviceDuration,
+  servicesSummary,
+  validServiceCatalog,
+} from '../../lib/service-catalog';
 
 const FIXED = [{ name: 'Small dog groom', duration_minutes: 60 }];
 const SPREAD = [{ name: 'Full groom', duration_minutes: 180, price: 65, price_max: 135 }];
@@ -52,5 +57,25 @@ describe('servicesSummary', () => {
   it('is empty rather than wrong when no catalog is configured', () => {
     expect(servicesSummary(null)).toBe('');
     expect(servicesSummary([])).toBe('');
+  });
+});
+
+describe('availabilityDuration', () => {
+  const CATALOG = [...FIXED, ...SPREAD];
+
+  it('checks the length the named service will be booked for, not the agent’s guess', () => {
+    expect(availabilityDuration(CATALOG, 'full groom', 30)).toBe(180);
+  });
+
+  it('holds out for the longest service when none is named', () => {
+    expect(availabilityDuration(CATALOG, undefined, 30)).toBe(180);
+  });
+
+  it('refuses a service the shop does not sell', () => {
+    expect(availabilityDuration(CATALOG, 'Teeth whitening', 30)).toBeNull();
+  });
+
+  it('keeps the agent’s duration for a shop without a catalog', () => {
+    expect(availabilityDuration(null, 'Haircut', 45)).toBe(45);
   });
 });

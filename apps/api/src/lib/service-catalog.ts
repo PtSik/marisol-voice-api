@@ -50,6 +50,20 @@ export function serviceDuration(catalog: unknown, service: unknown): number | nu
   );
 }
 
+// Availability must be checked for the length that will be booked. With no service named — an
+// agent on a tool schema without `service` — hold out for the longest one the shop sells, so a
+// slot offered can never be too short for whatever the caller ends up booking.
+export function availabilityDuration(
+  catalog: unknown,
+  service: unknown,
+  requested: number,
+): number | null {
+  if (service === undefined && validServiceCatalog(catalog))
+    return Math.max(...catalog.map((s) => s.duration_minutes));
+  const configured = serviceDuration(catalog, service);
+  return configured === undefined ? requested : configured;
+}
+
 // The one sentence the agent reads out when a caller asks what the shop does. Built from the same
 // catalog that decides bookable durations, so it can never advertise a service booking refuses.
 export function servicesSummary(catalog: unknown): string {

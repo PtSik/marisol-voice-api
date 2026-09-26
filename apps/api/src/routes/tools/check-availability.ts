@@ -14,6 +14,7 @@ import {
   spokenTimeLabel,
   tzOffsetMinutes,
 } from '../../lib/hours';
+import { availabilityDuration } from '../../lib/service-catalog';
 import { type StaffMember, normalizeStaffName, parseStaff } from '../../lib/staff';
 import type {
   AvailableSlot,
@@ -121,7 +122,14 @@ export async function handleCheckAvailability(
   c: Context<{ Bindings: WorkerBindings }>,
   { params, shop, db }: ToolRequest<CheckAvailabilityParams>,
 ): Promise<Response> {
-  const { date, duration_minutes = 30, staff } = params;
+  const { date, duration_minutes: requestedDuration = 30, service, staff } = params;
+  const duration_minutes = availabilityDuration(shop.service_catalog, service, requestedDuration);
+  if (duration_minutes === null)
+    return c.json<ElevenLabsToolWebhookResponse>({
+      success: false,
+      result:
+        'Please choose a service from this business’s service list before checking times. Do not invent a service or duration.',
+    });
 
   if (calendarSetupIncomplete(shop)) {
     return c.json<ElevenLabsToolWebhookResponse>({

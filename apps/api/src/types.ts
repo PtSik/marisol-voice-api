@@ -51,6 +51,7 @@ export interface ElevenLabsToolWebhookResponse {
 export interface CheckAvailabilityParams {
   staff?: string;
   date: string;
+  service?: string;
   duration_minutes?: number;
 }
 
