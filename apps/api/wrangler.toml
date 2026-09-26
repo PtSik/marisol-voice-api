@@ -29,4 +29,7 @@ PORTAL_URL = "https://app.callmarisol.com/portal/calendar"
 # TWILIO_SMS_FROM  (optional shared SMS sender, e.g. verified toll-free; unset → send from each shop's twilio_number)
 # ENCRYPTION_KEY  (32-byte hex string for AES-256-GCM)
 # ADMIN_API_KEYS  (comma-separated list of bearer tokens)
+# ADMIN_IP_ALLOWLIST  (optional comma-separated IPs for /admin/*)
+# TOOLS_WEBHOOK_SECRET  (required — every /tools/* call is refused without it)
+# GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET  (calendar connect)
 # DISCORD_ALERT_WEBHOOK_URL  (optional incoming-webhook secret for team alerts — unset disables them)
