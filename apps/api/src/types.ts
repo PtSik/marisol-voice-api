@@ -22,14 +22,8 @@ export interface ConversationDynamicVariables {
 export interface ConversationInitiationClientData {
   dynamic_variables: ConversationDynamicVariables;
   conversation_config_override?: {
-    language?: string;
-    voice_id?: string;
-    max_duration_seconds?: number;
     agent?: {
-      prompt?: {
-        prompt?: string;
-      };
-      first_message?: string;
+      language?: string;
     };
   };
 }

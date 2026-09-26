@@ -60,7 +60,7 @@ export function buildPersonalizationData(
   if (shop.primary_language === 'es') {
     return {
       dynamic_variables: dynamicVars,
-      conversation_config_override: { language: 'es' },
+      conversation_config_override: { agent: { language: 'es' } },
     };
   }
 

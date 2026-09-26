@@ -33,16 +33,12 @@ describe('buildPersonalizationData — primary_language', () => {
     expect(data.conversation_config_override).toBeUndefined();
   });
 
-  it('opens in Spanish for a Spanish-first shop', () => {
+  // ElevenLabs reads the language at `agent.language`; a top-level `language` is silently ignored.
+  // Exact equality also pins that the voice is never overridden — both languages run on the same
+  // bilingual voice, so a caller switching mid-call keeps hearing the same receptionist.
+  it('opens in Spanish for a Spanish-first shop, and overrides nothing else', () => {
     const data = buildPersonalizationData(shop({ primary_language: 'es' }), '+13055550199');
-    expect(data.conversation_config_override?.language).toBe('es');
-  });
-
-  // The override must not touch the voice — both languages run on the same bilingual voice, so
-  // a caller switching mid-call keeps hearing the same receptionist.
-  it('never overrides the voice', () => {
-    const data = buildPersonalizationData(shop({ primary_language: 'es' }), '+13055550199');
-    expect(data.conversation_config_override?.voice_id).toBeUndefined();
+    expect(data.conversation_config_override).toEqual({ agent: { language: 'es' } });
   });
 
   it('still carries the dynamic variables when overriding the language', () => {
