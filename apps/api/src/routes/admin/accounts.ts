@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { hashPassword, verifyPassword } from '../../lib/password';
+import { readJson } from '../../lib/request';
 import { getSupabase } from '../../lib/supabase';
 import type { WorkerBindings } from '../../types';
 
@@ -28,7 +29,7 @@ function referralCode(): string {
   return Array.from(bytes, (b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join('');
 }
 
-function normaliseEmail(raw: unknown): string {
+export function normaliseEmail(raw: unknown): string {
   return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
 }
 
@@ -87,12 +88,8 @@ accountRoutes.get('/:id/shops', async (c) => {
 });
 
 accountRoutes.post('/', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const email = normaliseEmail(body.email);
   if (!email) return c.json({ error: 'Missing required field: email' }, 400);
@@ -144,12 +141,8 @@ accountRoutes.post('/', async (c) => {
 });
 
 accountRoutes.post('/verify-password', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const email = normaliseEmail(body.email);
   const password = typeof body.password === 'string' ? body.password : '';
@@ -171,12 +164,8 @@ accountRoutes.post('/verify-password', async (c) => {
 });
 
 accountRoutes.patch('/:id', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const { password, ...rest } = body;
   const built = buildAccountUpdate(rest);

@@ -1,14 +1,11 @@
 import type { Context } from 'hono';
+import { readJson } from '../../lib/request';
 import { getSupabase } from '../../lib/supabase';
 import type { PostCallWebhookPayload, WorkerBindings } from '../../types';
 
 export async function handlePostCall(c: Context<{ Bindings: WorkerBindings }>): Promise<Response> {
-  let payload: PostCallWebhookPayload;
-  try {
-    payload = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const payload = await readJson<PostCallWebhookPayload>(c);
+  if (!payload) return c.json({ error: 'Invalid JSON' }, 400);
 
   if (payload.type !== 'post_call_transcription') {
     return c.json({ received: true });

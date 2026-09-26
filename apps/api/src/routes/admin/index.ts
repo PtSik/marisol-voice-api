@@ -7,6 +7,7 @@ import {
   resolveRouting,
 } from '../../lib/gcal';
 import { ambiguousHoursDay, isValidHoursKey, parseTime } from '../../lib/hours';
+import { readJson } from '../../lib/request';
 import { validServiceCatalog } from '../../lib/service-catalog';
 import { parseStaff } from '../../lib/staff';
 import { getSupabase } from '../../lib/supabase';
@@ -58,26 +59,19 @@ const REQUIRED_CREATE_FIELDS = [
   'elevenlabs_agent_id',
 ];
 
-// Undefined is valid — the column defaults to 'en', so provisioning may simply omit it.
-function isValidPrimaryLanguage(v: unknown): boolean {
-  return v === undefined || v === 'en' || v === 'es';
-}
-
-// Undefined is valid — the column defaults to false, and every caller except the demo seeder omits
-// it. Anything else must be a real boolean: this flag decides whether a shop can hand a caller to a
-// human, and set wrongly on a paying client their callers stop reaching them with nothing in the
-// logs to say so. A typo'd value earns a clear 400 here rather than a Postgres cast error.
-function isValidIsDemo(v: unknown): boolean {
-  return v === undefined || typeof v === 'boolean';
-}
-
-// Mirrors the CHECK in migration 0021. Undefined is valid — the column defaults to 'suspended'.
-// Without this a typo'd status lands as a Postgres cast error, and a status the lookups do not know
-// about (see CALLABLE_STATUSES) is a shop whose number answers 404 with nothing to say why.
+// Mirrors the CHECK in migration 0021. Without this a typo'd status lands as a Postgres cast error,
+// and a status the lookups do not know about (see CALLABLE_STATUSES) is a shop whose number
+// answers 404 with nothing to say why.
 const SHOP_STATUSES = ['active', 'cancelled', 'suspended'];
 
-function isValidStatus(v: unknown): boolean {
-  return v === undefined || (typeof v === 'string' && SHOP_STATUSES.includes(v));
+// JSON columns arrive as an object or as pre-stringified text; either way they are parsed here so
+// the shape can be checked, and a body that is not JSON gets a 400 naming the field.
+function parseJsonField(raw: unknown, field: string): { parsed: unknown } | { error: string } {
+  try {
+    return { parsed: JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw)) };
+  } catch {
+    return { error: `${field} is not valid JSON` };
+  }
 }
 
 function isValidHoursValue(v: unknown): boolean {
@@ -90,12 +84,9 @@ function isValidHoursValue(v: unknown): boolean {
 // Hours/closures are stored as JSON text; accept either a JSON object/array or a
 // pre-stringified one, validate the shape, and return the canonical string to store.
 function validateHoursJson(raw: unknown): { value: string } | { error: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw));
-  } catch {
-    return { error: 'hours_json is not valid JSON' };
-  }
+  const json = parseJsonField(raw, 'hours_json');
+  if ('error' in json) return json;
+  const { parsed } = json;
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
     for (const [day, hrs] of Object.entries(parsed)) {
       // The key matters as much as the value: nothing downstream can match a day it cannot name,
@@ -123,12 +114,9 @@ function validateHoursJson(raw: unknown): { value: string } | { error: string } 
 // with a stable id. The bare-name shape is refused rather than coerced: it used to parse, and a
 // roster that silently came back empty books whoever the caller names without checking a schedule.
 function validateStaffJson(raw: unknown): { value: string } | { error: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw));
-  } catch {
-    return { error: 'staff_json is not valid JSON' };
-  }
+  const json = parseJsonField(raw, 'staff_json');
+  if ('error' in json) return json;
+  const { parsed } = json;
   if (!Array.isArray(parsed)) return { error: 'staff_json must be an array' };
   if (parsed.some((entry) => typeof entry === 'string')) {
     return { error: 'staff_json: each member is an object with a name, not a bare string' };
@@ -160,12 +148,9 @@ function validateCalendarRouting(
   raw: unknown,
 ): { value: CalendarRouting | null } | { error: string } {
   if (raw === null) return { value: null };
-  let parsed: unknown;
-  try {
-    parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-  } catch {
-    return { error: 'calendar_routing is not valid JSON' };
-  }
+  const json = parseJsonField(raw, 'calendar_routing');
+  if ('error' in json) return json;
+  const { parsed } = json;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     return { error: 'calendar_routing must be an object' };
   }
@@ -211,12 +196,9 @@ function validateCalendarRouting(
 }
 
 function validateClosuresJson(raw: unknown): { value: string } | { error: string } {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(typeof raw === 'string' ? raw : JSON.stringify(raw));
-  } catch {
-    return { error: 'closures_json is not valid JSON' };
-  }
+  const json = parseJsonField(raw, 'closures_json');
+  if ('error' in json) return json;
+  const { parsed } = json;
   if (
     !Array.isArray(parsed) ||
     !parsed.every((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d))
@@ -253,13 +235,17 @@ function validateShopField(key: string, value: unknown): { value: unknown } | { 
       if (typeof value !== 'boolean') return { error: `${key} must be a boolean` };
       return { value };
     case 'primary_language':
-      if (!isValidPrimaryLanguage(value)) return { error: "primary_language must be 'en' or 'es'" };
+      if (value !== 'en' && value !== 'es')
+        return { error: "primary_language must be 'en' or 'es'" };
       return { value };
+    // This flag decides whether a shop can hand a caller to a human; set wrongly on a paying client,
+    // their callers stop reaching them with nothing in the logs to say so. A typo'd value earns a
+    // clear 400 here rather than a Postgres cast error.
     case 'is_demo':
-      if (!isValidIsDemo(value)) return { error: 'is_demo must be a boolean' };
+      if (typeof value !== 'boolean') return { error: 'is_demo must be a boolean' };
       return { value };
     case 'status':
-      if (!isValidStatus(value))
+      if (typeof value !== 'string' || !SHOP_STATUSES.includes(value))
         return { error: `status must be one of: ${SHOP_STATUSES.join(', ')}` };
       return { value };
     default:
@@ -382,12 +368,8 @@ export function buildShopCreate(
 }
 
 adminRoutes.post('/shops', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const built = buildShopCreate(body);
   if ('error' in built) return c.json({ error: built.error }, 400);
@@ -421,12 +403,8 @@ export function buildShopUpdate(
 }
 
 adminRoutes.patch('/shops/:id', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const built = buildShopUpdate(body);
   if ('error' in built) return c.json({ error: built.error }, 400);

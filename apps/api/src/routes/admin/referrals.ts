@@ -1,6 +1,8 @@
 import { Hono } from 'hono';
+import { readJson } from '../../lib/request';
 import { getSupabase } from '../../lib/supabase';
 import type { WorkerBindings } from '../../types';
+import { normaliseEmail } from './accounts';
 
 const STATUSES = new Set([
   'pending',
@@ -23,10 +25,6 @@ const MUTABLE_FIELDS = new Set([
 
 const WITH_REFERRER =
   '*,referrer:accounts!referrals_referrer_account_id_fkey(id,email,lead_id,referral_code,payout_method,payout_handle)';
-
-function normaliseEmail(raw: unknown): string {
-  return typeof raw === 'string' ? raw.trim().toLowerCase() : '';
-}
 
 export function buildReferralUpdate(
   body: Record<string, unknown>,
@@ -64,12 +62,8 @@ referralRoutes.get('/', async (c) => {
 });
 
 referralRoutes.post('/', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const code = typeof body.referral_code === 'string' ? body.referral_code.trim() : '';
   const referredLeadId =
@@ -114,12 +108,8 @@ referralRoutes.post('/', async (c) => {
 });
 
 referralRoutes.patch('/:id', async (c) => {
-  let body: Record<string, unknown>;
-  try {
-    body = await c.req.json();
-  } catch {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
+  const body = await readJson(c);
+  if (!body) return c.json({ error: 'Invalid JSON' }, 400);
 
   const built = buildReferralUpdate(body);
   if ('error' in built) return c.json({ error: built.error }, 400);
