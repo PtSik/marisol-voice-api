@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test';
 import worker from '../../index';
+import { hashPassword } from '../../lib/password';
 import { buildAccountUpdate } from '../../routes/admin/accounts';
 import type { WorkerBindings } from '../../types';
 
@@ -111,6 +112,16 @@ describe('/admin/accounts', () => {
       body: JSON.stringify({ password: 'new-password-123' }),
     });
     expect(res.status).toBe(500);
+  });
+
+  it('refuses the whole patch when a field is invalid, even with a valid password', async () => {
+    const res = await call('/admin/accounts/acc-1', {
+      method: 'PATCH',
+      body: JSON.stringify({ payout_method: 'bitcoin', password: 'new-password-123' }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string };
+    expect(body.error).toBe('invalid payout_method');
   });
 
   it('rejects a patch with a blank password', async () => {
@@ -248,7 +259,7 @@ describe('buildAccountUpdate', () => {
 
   it('drops a raw password_hash — only the route handler may set it, from a plaintext password', () => {
     const built = buildAccountUpdate({ password_hash: 'fake-hash-injected' });
-    expect(built).toEqual({ error: 'No updatable fields provided' });
+    expect(built).toEqual({ update: {} });
   });
 
   it('lets lead_id through', () => {
@@ -281,5 +292,65 @@ describe('buildAccountUpdate', () => {
     expect(buildAccountUpdate({ payout_method: 'zelle', payout_handle: '   ' })).toEqual({
       error: 'payout_handle must be a non-empty string',
     });
+  });
+});
+
+// password_hash is compared inside the worker and must never be asked for by a route that returns
+// the row, nor come back from the one that compares it.
+describe('/admin/accounts never hands out password_hash', () => {
+  const dbEnv = {
+    SUPABASE_URL: 'https://db.example.com',
+    SUPABASE_SERVICE_ROLE_KEY: 'service-role',
+    ADMIN_API_KEYS: 'testkey',
+  } as unknown as WorkerBindings;
+  const realFetch = globalThis.fetch;
+  let requested: string[] = [];
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    requested = [];
+  });
+
+  function answerWith(row: Record<string, unknown>) {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      requested.push(decodeURIComponent(String(input)));
+      return new Response(JSON.stringify(row), { headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+  }
+
+  function send(path: string, init: RequestInit = {}) {
+    return worker.fetch(
+      new Request(`https://example.com${path}`, {
+        ...init,
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer testkey' },
+      }),
+      dbEnv,
+      ctx,
+    );
+  }
+
+  it('does not select it on a lookup', async () => {
+    answerWith({ id: 'acc-1', email: 'owner@shop.com' });
+    await send('/admin/accounts?email=owner@shop.com');
+    expect(requested).toHaveLength(1);
+    expect(requested[0]).toContain('select=');
+    expect(requested[0]).not.toContain('password_hash');
+    expect(requested[0]).not.toContain('select=*');
+  });
+
+  it('strips it from a successful password check', async () => {
+    answerWith({
+      id: 'acc-1',
+      email: 'owner@shop.com',
+      password_hash: await hashPassword('correct-horse-42'),
+    });
+    const res = await send('/admin/accounts/verify-password', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'owner@shop.com', password: 'correct-horse-42' }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { account: Record<string, unknown> };
+    expect(body.account.id).toBe('acc-1');
+    expect(body.account).not.toHaveProperty('password_hash');
   });
 });

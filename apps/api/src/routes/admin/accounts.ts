@@ -16,6 +16,10 @@ const MUTABLE_FIELDS = new Set([
 
 const PAYOUT_METHODS = new Set(['paypal', 'venmo', 'zelle']);
 
+// Every column except password_hash, which is compared here and never leaves the worker.
+const ACCOUNT_COLUMNS =
+  'id, email, google_sub, shop_id, lead_id, referral_code, email_verified, payout_method, payout_handle, created_at, last_login_at';
+
 // Crockford base32 without I/L/O/U: referral codes get read aloud and typed by hand.
 const CODE_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
@@ -51,7 +55,6 @@ export function buildAccountUpdate(
       update[key] = value;
     }
   }
-  if (Object.keys(update).length === 0) return { error: 'No updatable fields provided' };
   return { update };
 }
 
@@ -62,7 +65,11 @@ accountRoutes.get('/', async (c) => {
   if (!email) return c.json({ error: 'email query parameter is required' }, 400);
 
   const db = getSupabase(c.env);
-  const { data, error } = await db.from('accounts').select('*').eq('email', email).maybeSingle();
+  const { data, error } = await db
+    .from('accounts')
+    .select(ACCOUNT_COLUMNS)
+    .eq('email', email)
+    .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
   if (!data) return c.json({ error: 'Account not found' }, 404);
   return c.json({ account: data });
@@ -96,7 +103,11 @@ accountRoutes.post('/', async (c) => {
       : undefined;
 
   const db = getSupabase(c.env);
-  const existing = await db.from('accounts').select('*').eq('email', email).maybeSingle();
+  const existing = await db
+    .from('accounts')
+    .select(ACCOUNT_COLUMNS)
+    .eq('email', email)
+    .maybeSingle();
   if (existing.error) return c.json({ error: existing.error.message }, 500);
   // Get-or-create is what provisioning wants, but a sign-up carries a password: handing that caller
   // the existing row would let it mint a session on an account whose password it never proved.
@@ -112,12 +123,16 @@ accountRoutes.post('/', async (c) => {
     ...(body.lead_id ? { lead_id: body.lead_id } : {}),
     ...(passwordHash ? { password_hash: passwordHash } : {}),
   };
-  const { data, error } = await db.from('accounts').insert(insert).select().single();
+  const { data, error } = await db.from('accounts').insert(insert).select(ACCOUNT_COLUMNS).single();
   if (error) {
     // Unique violation: either a concurrent provisioning won the race on the email, or the
     // random code collided. Re-reading by email settles the first and is harmless for the second.
     if (error.code === '23505') {
-      const retry = await db.from('accounts').select('*').eq('email', email).maybeSingle();
+      const retry = await db
+        .from('accounts')
+        .select(ACCOUNT_COLUMNS)
+        .eq('email', email)
+        .maybeSingle();
       if (retry.data) {
         if (passwordHash) return c.json({ error: 'Account already exists' }, 409);
         return c.json({ account: retry.data });
@@ -141,14 +156,18 @@ accountRoutes.post('/verify-password', async (c) => {
   if (!email || !password) return c.json({ error: 'email and password are required' }, 400);
 
   const db = getSupabase(c.env);
-  const { data, error } = await db.from('accounts').select('*').eq('email', email).maybeSingle();
+  const { data, error } = await db
+    .from('accounts')
+    .select(`${ACCOUNT_COLUMNS}, password_hash`)
+    .eq('email', email)
+    .maybeSingle();
   if (error) return c.json({ error: error.message }, 500);
-  if (!data || !data.password_hash) return c.json({ ok: false }, 401);
+  if (!data?.password_hash) return c.json({ ok: false }, 401);
 
-  const valid = await verifyPassword(password, data.password_hash);
-  if (!valid) return c.json({ ok: false }, 401);
+  const { password_hash, ...account } = data;
+  if (!(await verifyPassword(password, password_hash))) return c.json({ ok: false }, 401);
 
-  return c.json({ ok: true, account: data });
+  return c.json({ ok: true, account });
 });
 
 accountRoutes.patch('/:id', async (c) => {
@@ -161,7 +180,10 @@ accountRoutes.patch('/:id', async (c) => {
 
   const { password, ...rest } = body;
   const built = buildAccountUpdate(rest);
-  const update: Record<string, unknown> = 'update' in built ? { ...built.update } : {};
+  // A bad field fails the whole request: saving the password alone would report success for an
+  // edit the caller believes was applied.
+  if ('error' in built) return c.json({ error: built.error }, 400);
+  const update: Record<string, unknown> = { ...built.update };
 
   if (password !== undefined) {
     if (typeof password !== 'string' || !password) {
@@ -171,7 +193,7 @@ accountRoutes.patch('/:id', async (c) => {
   }
 
   if (Object.keys(update).length === 0) {
-    return c.json({ error: 'error' in built ? built.error : 'No updatable fields provided' }, 400);
+    return c.json({ error: 'No updatable fields provided' }, 400);
   }
 
   const db = getSupabase(c.env);
@@ -179,7 +201,7 @@ accountRoutes.patch('/:id', async (c) => {
     .from('accounts')
     .update(update)
     .eq('id', c.req.param('id'))
-    .select()
+    .select(ACCOUNT_COLUMNS)
     .single();
   if (error) {
     if (error.code === 'PGRST116') return c.json({ error: 'Account not found' }, 404);
