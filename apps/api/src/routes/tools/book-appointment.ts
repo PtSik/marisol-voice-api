@@ -26,7 +26,7 @@ import {
   spokenCode,
 } from '../../lib/sms-templates';
 import { resolveStaffForBooking } from '../../lib/staff';
-import { BOOKING_CODE_TTL_MINUTES, generateCode, storeCode } from '../../lib/verification';
+import { generateCode, storeCode } from '../../lib/verification';
 import type {
   BookAppointmentParams,
   ElevenLabsToolWebhookResponse,
@@ -213,7 +213,7 @@ export async function handleBookAppointment(
   // The verification code is the cancel/reschedule contract — keep SMS inline so we
   // can confirm delivery and fall back to reading it aloud if the text fails.
   const code = generateCode();
-  await storeCode(db, booking.id, code, BOOKING_CODE_TTL_MINUTES);
+  await storeCode(db, booking.id, code);
 
   const smsLabel = smsWhenLabel(startMs, shop.timezone, language);
   const spokenLabel = spokenDateTimeLabel(startMs, shop.timezone);

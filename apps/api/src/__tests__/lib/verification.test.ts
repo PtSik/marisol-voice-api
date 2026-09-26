@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
 import { generateCode, hashCode, verifyCode } from '../../lib/verification';
 
-// In-memory Supabase stub — emulates the PostgREST filter chain used by verifyCode:
-//   .select().eq().eq().is().gt().limit().single()  and  .update().eq()
+// In-memory Supabase stub — emulates the one PostgREST chain verifyCode uses:
+//   .update(values).eq().eq().is().gt().select()
+// and applies it to the record, so a second verification sees the first one's `used_at`.
 type Filter = ['eq' | 'is' | 'gt', string, unknown];
 
-function recordMatches(rec: Record<string, unknown> | null, filters: Filter[]): boolean {
-  if (!rec) return false;
+function recordMatches(rec: Record<string, unknown>, filters: Filter[]): boolean {
   for (const [op, col, val] of filters) {
     if (op === 'gt') {
       if (!(String(rec[col]) > String(val))) return false;
@@ -17,13 +17,16 @@ function recordMatches(rec: Record<string, unknown> | null, filters: Filter[]): 
   return true;
 }
 
-function makeSupabaseStub(record: Record<string, unknown> | null, updateOk = true) {
+function makeSupabaseStub(record: Record<string, unknown>) {
   return {
     from: () => {
       const filters: Filter[] = [];
+      let values: Record<string, unknown> = {};
       const builder = {
-        select: () => builder,
-        update: () => builder,
+        update: (v: Record<string, unknown>) => {
+          values = v;
+          return builder;
+        },
         eq: (col: string, val: unknown) => {
           filters.push(['eq', col, val]);
           return builder;
@@ -36,14 +39,11 @@ function makeSupabaseStub(record: Record<string, unknown> | null, updateOk = tru
           filters.push(['gt', col, val]);
           return builder;
         },
-        limit: () => builder,
-        single: async () =>
-          recordMatches(record, filters)
-            ? { data: { id: record?.id }, error: null }
-            : { data: null, error: { code: 'PGRST116' } },
-        // biome-ignore lint/suspicious/noThenProperty: stub emulates an awaitable PostgREST builder
-        then: (cb: (v: { error: null | Error }) => unknown) =>
-          cb({ error: updateOk ? null : new Error('update failed') }),
+        select: async () => {
+          if (!recordMatches(record, filters)) return { data: [], error: null };
+          Object.assign(record, values);
+          return { data: [{ id: record.id }], error: null };
+        },
       };
       return builder;
     },
@@ -128,5 +128,22 @@ describe('verification — verifyCode', () => {
     const supabase = makeSupabaseStub(record);
     const result = await verifyCode(supabase, bookingId, '1234');
     expect(result).toBe(false);
+  });
+
+  it('consumes the code, so the same code never verifies twice', async () => {
+    const record = {
+      id: 'vc-5',
+      booking_id: bookingId,
+      code_hash: await hashCode('1234'),
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      used_at: null,
+    };
+    const supabase = makeSupabaseStub(record);
+    const results = await Promise.all([
+      verifyCode(supabase, bookingId, '1234'),
+      verifyCode(supabase, bookingId, '1234'),
+    ]);
+    expect(results.filter(Boolean)).toHaveLength(1);
+    expect(record.used_at).not.toBeNull();
   });
 });

@@ -12,12 +12,7 @@ import {
   spokenCode,
 } from '../../lib/sms-templates';
 import { findInRoster, parseStaff } from '../../lib/staff';
-import {
-  BOOKING_CODE_TTL_MINUTES,
-  generateCode,
-  storeCode,
-  verifyCode,
-} from '../../lib/verification';
+import { generateCode, storeCode, verifyCode } from '../../lib/verification';
 import type {
   ElevenLabsToolWebhookResponse,
   RescheduleAppointmentParams,
@@ -205,7 +200,7 @@ export async function handleRescheduleAppointment(
   // verifyCode consumed the old single-use code — issue a fresh one so the caller
   // can still cancel or reschedule again.
   const newCode = generateCode();
-  await storeCode(db, booking_id, newCode, BOOKING_CODE_TTL_MINUTES);
+  await storeCode(db, booking_id, newCode);
 
   const smsLabel = smsWhenLabel(new Date(new_start_time).getTime(), shop.timezone, language);
   const spokenLabel = spokenDateTimeLabel(new Date(new_start_time).getTime(), shop.timezone);
