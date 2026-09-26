@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test';
-import { generateCode, hashCode, verifyCode } from '../../lib/verification';
+import { generateCode, hashCode, releaseCode, verifyCode } from '../../lib/verification';
 
 // In-memory Supabase stub — emulates the one PostgREST chain verifyCode uses:
-//   .update(values).eq().eq().is().gt().select()
+//   .update(values).eq().eq().is().gt().select()  — and releaseCode's .update().eq().eq()
 // and applies it to the record, so a second verification sees the first one's `used_at`.
 type Filter = ['eq' | 'is' | 'gt', string, unknown];
 
@@ -43,6 +43,12 @@ function makeSupabaseStub(record: Record<string, unknown>) {
           if (!recordMatches(record, filters)) return { data: [], error: null };
           Object.assign(record, values);
           return { data: [{ id: record.id }], error: null };
+        },
+        // releaseCode awaits the update without a select.
+        // biome-ignore lint/suspicious/noThenProperty: stub emulates an awaitable PostgREST builder
+        then: (cb: (v: { error: null }) => unknown) => {
+          if (recordMatches(record, filters)) Object.assign(record, values);
+          return cb({ error: null });
         },
       };
       return builder;
@@ -145,5 +151,19 @@ describe('verification — verifyCode', () => {
     ]);
     expect(results.filter(Boolean)).toHaveLength(1);
     expect(record.used_at).not.toBeNull();
+  });
+
+  it('verifies again after a release, so a failed change does not burn the caller’s code', async () => {
+    const record = {
+      id: 'vc-6',
+      booking_id: bookingId,
+      code_hash: await hashCode('1234'),
+      expires_at: new Date(Date.now() + 60_000).toISOString(),
+      used_at: null,
+    };
+    const supabase = makeSupabaseStub(record);
+    expect(await verifyCode(supabase, bookingId, '1234')).toBe(true);
+    await releaseCode(supabase, bookingId, '1234');
+    expect(await verifyCode(supabase, bookingId, '1234')).toBe(true);
   });
 });

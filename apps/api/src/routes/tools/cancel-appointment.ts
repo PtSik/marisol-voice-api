@@ -4,7 +4,7 @@ import { gcalDeleteEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
 import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { cancellationSms, normalizeSmsLanguage, smsWhenLabel } from '../../lib/sms-templates';
-import { verifyCode } from '../../lib/verification';
+import { releaseCode, verifyCode } from '../../lib/verification';
 import type {
   CancelAppointmentParams,
   ElevenLabsToolWebhookResponse,
@@ -54,7 +54,7 @@ export async function handleCancelAppointment(
   const hasCalendar =
     shop.integration === 'google_calendar' && !!shop.integration_credentials_encrypted;
 
-  await db
+  const { error: cancelError } = await db
     .from('bookings')
     .update({
       status: 'cancelled',
@@ -65,6 +65,14 @@ export async function handleCancelAppointment(
       ...(hasCalendar ? { gcal_sync_pending: true } : {}),
     })
     .eq('id', booking_id);
+
+  if (cancelError) {
+    await releaseCode(db, booking_id, code);
+    return c.json<ElevenLabsToolWebhookResponse>({
+      result: 'I could not cancel the appointment just now. Please try again in a moment.',
+      success: false,
+    });
+  }
 
   if (hasCalendar && shop.integration_credentials_encrypted && booking.gcal_event_id) {
     const encryptedCreds = shop.integration_credentials_encrypted;

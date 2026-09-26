@@ -12,7 +12,7 @@ import {
   spokenCode,
 } from '../../lib/sms-templates';
 import { findInRoster, parseStaff } from '../../lib/staff';
-import { generateCode, storeCode, verifyCode } from '../../lib/verification';
+import { generateCode, releaseCode, storeCode, verifyCode } from '../../lib/verification';
 import type {
   ElevenLabsToolWebhookResponse,
   RescheduleAppointmentParams,
@@ -154,6 +154,7 @@ export async function handleRescheduleAppointment(
     .eq('id', booking_id);
 
   if (error) {
+    await releaseCode(db, booking_id, code);
     return c.json<ElevenLabsToolWebhookResponse>({
       result:
         error.code === '23P01'

@@ -55,3 +55,18 @@ export async function verifyCode(
 
   return !error && (data?.length ?? 0) > 0;
 }
+
+// Hands a consumed code back when the change it authorised was not written, so the caller's retry
+// is not refused as "invalid code" for a booking that never changed.
+export async function releaseCode(
+  db: SupabaseClient,
+  bookingId: string,
+  code: string,
+): Promise<void> {
+  const { error } = await db
+    .from('verification_codes')
+    .update({ used_at: null })
+    .eq('booking_id', bookingId)
+    .eq('code_hash', await hashCode(code));
+  if (error) console.error(`[verification] release failed for ${bookingId}: ${error.message}`);
+}
