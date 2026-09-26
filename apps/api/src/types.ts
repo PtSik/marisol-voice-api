@@ -32,7 +32,6 @@ export interface ElevenLabsToolWebhookResponse {
   result: string;
   success: boolean;
   data?: Record<string, unknown>;
-  error?: string;
 }
 
 export interface CheckAvailabilityParams {
@@ -87,38 +86,15 @@ export interface EscalateParams {
   customer_phone?: string;
 }
 
+// Only the fields handlePostCall reads; the webhook carries the transcript and analysis too.
 export interface PostCallWebhookPayload {
   type: 'post_call_transcription';
   event_timestamp: number;
-  data: PostCallData;
-}
-
-export interface PostCallData {
-  agent_id: string;
-  conversation_id: string;
-  status: string;
-  transcript?: PostCallTranscriptEntry[];
-  metadata?: PostCallMetadata;
-  analysis?: PostCallAnalysis;
-  conversation_initiation_client_data?: {
-    dynamic_variables?: ConversationDynamicVariables;
+  data: {
+    conversation_id: string;
+    status: string;
+    metadata?: { call_duration_secs?: number };
   };
-}
-
-export interface PostCallTranscriptEntry {
-  role: string;
-  message: string;
-}
-
-export interface PostCallMetadata {
-  call_duration_secs?: number;
-  cost?: number;
-}
-
-export interface PostCallAnalysis {
-  call_successful?: string;
-  transcript_summary?: string;
-  data_collection_results?: Record<string, { value: unknown }>;
 }
 
 export interface CalendarAttribution {
@@ -156,8 +132,8 @@ export interface ShopRow {
   calendar_routing: CalendarRouting | null;
   elevenlabs_agent_id: string | null;
   primary_language: 'en' | 'es';
-  // Widget and sales-pool shops only. Suppresses anything that reaches a real person — see
-  // `handleEscalate`. Optional so a row selected before migration 0014 still types.
+  // The landing-page demo lines only. Suppresses anything that reaches a real person — see
+  // `handleEscalate`.
   is_demo?: boolean;
   reminders_enabled: boolean;
   sms_enabled?: boolean;
