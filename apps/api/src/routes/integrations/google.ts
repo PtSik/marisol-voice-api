@@ -92,18 +92,23 @@ export function portalReturnUrl(env: WorkerBindings): string {
   }
 }
 
+const INVALID_LINK_PAGE =
+  "<h1>This link isn't valid</h1><p>Please use the button from your welcome email, or reply to it and we'll help.</p>";
+const NOT_READY_PAGE =
+  '<h1>Calendar access is not ready</h1><p>We’ll email you when your calendar access is ready. Contact us if you need help.</p>';
+
+// Google compares this byte for byte between the consent request and the code exchange.
+function callbackUrl(requestUrl: string): string {
+  return `${new URL(requestUrl).origin}/integrations/google/callback`;
+}
+
 export const googleIntegrationRoutes = new Hono<{ Bindings: WorkerBindings }>();
 
 googleIntegrationRoutes.get('/start', async (c) => {
   const shopId = c.req.query('shop_id') ?? '';
   const sig = c.req.query('sig') ?? '';
   if (!shopId || !sig || !(await validSig(c.env, shopId, sig))) {
-    return c.html(
-      page(
-        "<h1>This link isn't valid</h1><p>Please use the button from your welcome email, or reply to it and we'll help.</p>",
-      ),
-      400,
-    );
+    return c.html(page(INVALID_LINK_PAGE), 400);
   }
   if (!c.env.GOOGLE_OAUTH_CLIENT_ID) {
     return c.html(
@@ -114,18 +119,12 @@ googleIntegrationRoutes.get('/start', async (c) => {
     );
   }
   if (!canConnectCalendar(await loadShop(c.env, shopId))) {
-    return c.html(
-      page(
-        '<h1>Calendar access is not ready</h1><p>We’ll email you when your calendar access is ready. Contact us if you need help.</p>',
-      ),
-      403,
-    );
+    return c.html(page(NOT_READY_PAGE), 403);
   }
-  const redirectUri = `${new URL(c.req.url).origin}/integrations/google/callback`;
   const authUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
   authUrl.search = new URLSearchParams({
     client_id: c.env.GOOGLE_OAUTH_CLIENT_ID,
-    redirect_uri: redirectUri,
+    redirect_uri: callbackUrl(c.req.url),
     response_type: 'code',
     scope: SCOPE,
     access_type: 'offline',
@@ -157,14 +156,8 @@ googleIntegrationRoutes.get('/callback', async (c) => {
   }
 
   if (!canConnectCalendar(await loadShop(c.env, shopId))) {
-    return c.html(
-      page(
-        '<h1>Calendar access is not ready</h1><p>We’ll email you when your calendar access is ready. Contact us if you need help.</p>',
-      ),
-      403,
-    );
+    return c.html(page(NOT_READY_PAGE), 403);
   }
-  const redirectUri = `${new URL(c.req.url).origin}/integrations/google/callback`;
   const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -172,7 +165,7 @@ googleIntegrationRoutes.get('/callback', async (c) => {
       code,
       client_id: c.env.GOOGLE_OAUTH_CLIENT_ID ?? '',
       client_secret: c.env.GOOGLE_OAUTH_CLIENT_SECRET ?? '',
-      redirect_uri: redirectUri,
+      redirect_uri: callbackUrl(c.req.url),
       grant_type: 'authorization_code',
     }),
   });
@@ -460,12 +453,7 @@ googleIntegrationRoutes.get('/select', async (c) => {
   const shopId = c.req.query('shop_id') ?? '';
   const sig = c.req.query('sig') ?? '';
   if (!shopId || !sig || !(await validSig(c.env, shopId, sig))) {
-    return c.html(
-      page(
-        "<h1>This link isn't valid</h1><p>Please use the button from your welcome email, or reply to it and we'll help.</p>",
-      ),
-      400,
-    );
+    return c.html(page(INVALID_LINK_PAGE), 400);
   }
 
   const ctx = await calendarContext(c, shopId);
@@ -487,12 +475,7 @@ googleIntegrationRoutes.post('/select', async (c) => {
   const shopId = typeof body.shop_id === 'string' ? body.shop_id : '';
   const sig = typeof body.sig === 'string' ? body.sig : '';
   if (!shopId || !sig || !(await validSig(c.env, shopId, sig))) {
-    return c.html(
-      page(
-        "<h1>This link isn't valid</h1><p>Please use the button from your welcome email, or reply to it and we'll help.</p>",
-      ),
-      400,
-    );
+    return c.html(page(INVALID_LINK_PAGE), 400);
   }
 
   const ctx = await calendarContext(c, shopId);
@@ -500,31 +483,30 @@ googleIntegrationRoutes.post('/select', async (c) => {
 
   const { shop, calendars } = ctx;
   const staff = parseStaff(shop.staff_json);
-  const current = resolveRouting(shop);
   const writableIds = new Set(calendars.filter(canWriteTo).map((cal) => cal.id));
   const knownIds = new Set(calendars.map((cal) => cal.id));
+
+  // Each field is read from the form once. `picked` is what the owner chose, re-rendered as-is on
+  // a refusal so nothing they ticked is lost; `routing` below is the validated subset that is saved.
+  const text = (value: unknown) => (typeof value === 'string' ? value : '');
+  const chosen = (entries: [string, string][]) => Object.fromEntries(entries.filter(([, v]) => v));
+  const picked = {
+    write: text(body.write_calendar),
+    staff: chosen(staff.map((m) => [m.id, text(body[`staff_${m.id}`])])),
+    busy: (Array.isArray(body.busy) ? body.busy : [body.busy]).map(text).filter(Boolean),
+    // A wrong attribution frees a slot rather than holding it, so anything we don't understand
+    // falls back to "blocks everyone".
+    mode: (body.attribution_mode === 'color' || body.attribution_mode === 'title_prefix'
+      ? body.attribution_mode
+      : 'off') as CalendarAttribution['mode'],
+    colors: chosen(GOOGLE_EVENT_COLORS.map(([id]) => [id, text(body[`colorstaff_${id}`])])),
+  };
   const submitted: CalendarRouting = {
-    write_calendar_id:
-      typeof body.write_calendar === 'string' ? body.write_calendar : current.write_calendar_id,
-    staff_calendars: Object.fromEntries(
-      staff
-        .map((m) => [m.id, body[`staff_${m.id}`]])
-        .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1]),
-    ),
-    busy_calendar_ids: (Array.isArray(body.busy) ? body.busy : body.busy ? [body.busy] : []).filter(
-      (v): v is string => typeof v === 'string',
-    ),
+    write_calendar_id: picked.write || resolveRouting(shop).write_calendar_id,
+    staff_calendars: picked.staff,
+    busy_calendar_ids: picked.busy,
     attribution:
-      body.attribution_mode === 'color'
-        ? {
-            mode: 'color',
-            colors: Object.fromEntries(
-              GOOGLE_EVENT_COLORS.map(([id]) => [id, body[`colorstaff_${id}`]]).filter(
-                (entry): entry is [string, string] => typeof entry[1] === 'string' && !!entry[1],
-              ),
-            ),
-          }
-        : { mode: body.attribution_mode === 'title_prefix' ? 'title_prefix' : 'off' },
+      picked.mode === 'color' ? { mode: 'color', colors: picked.colors } : { mode: picked.mode },
   };
   const rerender = async (error: string, status: 400 | 500 = 400) =>
     c.html(
@@ -543,31 +525,20 @@ googleIntegrationRoutes.post('/select', async (c) => {
       status,
     );
 
-  const writeCalendarId = typeof body.write_calendar === 'string' ? body.write_calendar : '';
   // A read-only calendar as the write target would fail silently: the booking and its SMS
   // still succeed (the event write runs in waitUntil) and the calendar stays empty.
-  if (!writableIds.has(writeCalendarId)) {
+  if (!writableIds.has(picked.write)) {
     return await rerender('Please pick a booking calendar you can edit.');
   }
-
-  const staffCalendars: Record<string, string> = {};
   for (const member of staff) {
-    const picked = body[`staff_${member.id}`];
-    const id = typeof picked === 'string' ? picked : '';
-    if (!id) continue;
-    if (!writableIds.has(id))
+    const id = picked.staff[member.id];
+    if (id && !writableIds.has(id))
       return await rerender(`Please pick a calendar you can edit for ${member.name}.`);
-    staffCalendars[member.id] = id;
   }
 
-  const busyRaw = body.busy;
-  const alreadyRead = new Set([writeCalendarId, ...Object.values(staffCalendars)]);
+  const alreadyRead = new Set([picked.write, ...Object.values(picked.staff)]);
   const busyCalendarIds = [
-    ...new Set(
-      (Array.isArray(busyRaw) ? busyRaw : busyRaw ? [busyRaw] : [])
-        .filter((v): v is string => typeof v === 'string')
-        .filter((id) => knownIds.has(id) && !alreadyRead.has(id)),
-    ),
+    ...new Set(picked.busy.filter((id) => knownIds.has(id) && !alreadyRead.has(id))),
   ];
   if (busyCalendarIds.length > MAX_BUSY_CALENDARS) {
     return await rerender(
@@ -575,25 +546,20 @@ googleIntegrationRoutes.post('/select', async (c) => {
     );
   }
 
-  // A wrong attribution frees a slot rather than holding it, so anything we don't understand
-  // falls back to "blocks everyone".
-  const rawMode = body.attribution_mode;
-  const mode: CalendarAttribution['mode'] =
-    rawMode === 'color' || rawMode === 'title_prefix' ? rawMode : 'off';
-  const colors: Record<string, string> = {};
-  if (mode === 'color') {
-    const staffIds = new Set(staff.map((m) => m.id));
-    for (const [colorId] of GOOGLE_EVENT_COLORS) {
-      const picked = body[`colorstaff_${colorId}`];
-      if (typeof picked === 'string' && staffIds.has(picked)) colors[colorId] = picked;
-    }
-  }
-
+  const staffIds = new Set(staff.map((m) => m.id));
   const routing: CalendarRouting = {
-    write_calendar_id: writeCalendarId,
-    staff_calendars: staffCalendars,
+    write_calendar_id: picked.write,
+    staff_calendars: picked.staff,
     busy_calendar_ids: busyCalendarIds,
-    attribution: mode === 'color' ? { mode, colors } : { mode },
+    attribution:
+      picked.mode === 'color'
+        ? {
+            mode: 'color',
+            colors: Object.fromEntries(
+              Object.entries(picked.colors).filter(([, staffId]) => staffIds.has(staffId)),
+            ),
+          }
+        : { mode: picked.mode },
   };
 
   const { error } = await getSupabase(c.env)
