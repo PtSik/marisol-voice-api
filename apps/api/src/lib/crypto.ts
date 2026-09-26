@@ -49,9 +49,11 @@ export async function hmacSHA256(secret: string, message: string): Promise<strin
     ['sign'],
   );
   const sig = await crypto.subtle.sign('HMAC', key, enc.encode(message));
-  return `v0=${Array.from(new Uint8Array(sig))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('')}`;
+  return `v0=${toHex(sig)}`;
+}
+
+export function toHex(bytes: ArrayBuffer): string {
+  return Array.from(new Uint8Array(bytes), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
 // Constant-time comparison to prevent timing attacks

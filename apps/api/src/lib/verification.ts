@@ -1,4 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { toHex } from './crypto';
 
 export function generateCode(): string {
   const digits = crypto.getRandomValues(new Uint8Array(6));
@@ -9,10 +10,7 @@ export function generateCode(): string {
 
 export async function hashCode(code: string): Promise<string> {
   const enc = new TextEncoder();
-  const digest = await crypto.subtle.digest('SHA-256', enc.encode(code));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
+  return toHex(await crypto.subtle.digest('SHA-256', enc.encode(code)));
 }
 
 const BOOKING_CODE_TTL_MINUTES = 30 * 24 * 60;
