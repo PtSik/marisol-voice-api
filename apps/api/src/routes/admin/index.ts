@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import {
   canWriteTo,
   gcalListCalendars,
-  getGCalClient,
+  getGCalToken,
   getStaffBusy,
   resolveRouting,
 } from '../../lib/gcal';
@@ -308,12 +308,12 @@ adminRoutes.get('/shops/:id/calendar-check', async (c) => {
   )
     return c.json({ error: 'Finish connecting and selecting calendars' }, 409);
   try {
-    const client = await getGCalClient(
+    const token = await getGCalToken(
       c.env,
       shop.integration_credentials_encrypted,
       AbortSignal.timeout(5000),
     );
-    const calendars = await gcalListCalendars(client.token, AbortSignal.timeout(5000));
+    const calendars = await gcalListCalendars(token, AbortSignal.timeout(5000));
     const writable = new Set(calendars.filter(canWriteTo).map((cal) => cal.id));
     const routing = resolveRouting(shop);
     if (

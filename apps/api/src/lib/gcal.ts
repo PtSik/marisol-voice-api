@@ -3,12 +3,10 @@ import { logGcalFailure } from './calendar-alerts';
 import { decrypt } from './crypto';
 import { parseStaff } from './staff';
 
-// The OAuth blob holds the secret and nothing else — calendar ids live in
-// shops.calendar_routing. calendar_id is only still read for blobs written before that split.
+// The OAuth blob holds the secret and nothing else — calendar ids live in shops.calendar_routing.
 interface OAuthCreds {
   type: 'oauth';
   refresh_token: string;
-  calendar_id?: string;
 }
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
@@ -44,11 +42,11 @@ async function fetchOAuthToken(
   return access_token;
 }
 
-export async function getGCalClient(
+export async function getGCalToken(
   env: WorkerBindings,
   encryptedCreds: string,
   signal?: AbortSignal,
-): Promise<{ calendar_id: string; token: string }> {
+): Promise<string> {
   const creds = JSON.parse(await decrypt(encryptedCreds, env.ENCRYPTION_KEY)) as OAuthCreds;
   // The connect flow is the only writer, so anything else is a blob from the retired
   // service-account grant. Refusing here names the fix; passing it on would send an
@@ -58,8 +56,7 @@ export async function getGCalClient(
       'GCal credentials are not an OAuth grant; the shop must reconnect Google Calendar',
     );
   }
-  const token = await fetchOAuthToken(env, creds.refresh_token, signal);
-  return { calendar_id: creds.calendar_id ?? 'primary', token };
+  return fetchOAuthToken(env, creds.refresh_token, signal);
 }
 
 const DEFAULT_ROUTING: CalendarRouting = {
@@ -458,8 +455,7 @@ async function readStaffBusy(
 
   let token: string;
   try {
-    const gcal = await getGCalClient(env, encryptedCreds, signal);
-    token = gcal.token;
+    token = await getGCalToken(env, encryptedCreds, signal);
   } catch (err) {
     console.error('[gcal-busy] token unavailable:', err instanceof Error ? err.message : err);
     reportFailure(env, shop, options, { op: 'token', message: errorMessage(err) });
@@ -536,7 +532,7 @@ export function deferCalendarWrite(
   ctx.waitUntil(
     (async () => {
       try {
-        const { token } = await getGCalClient(env, target.encryptedCreds);
+        const token = await getGCalToken(env, target.encryptedCreds);
         await write(token);
       } catch (err) {
         await logGcalFailure(env, target.shopId, {

@@ -9,7 +9,7 @@ import {
   gcalListBusy,
   gcalListCalendars,
   gcalListDeltas,
-  getGCalClient,
+  getGCalToken,
   getStaffBusy,
   resolveRouting,
   writeCalendarFor,
@@ -455,7 +455,7 @@ describe('gcalListDeltas', () => {
   });
 });
 
-describe('getGCalClient', () => {
+describe('getGCalToken', () => {
   const env = {
     ENCRYPTION_KEY: 'a'.repeat(64),
     GOOGLE_OAUTH_CLIENT_ID: 'cid',
@@ -468,7 +468,7 @@ describe('getGCalClient', () => {
       env.ENCRYPTION_KEY,
     );
     mockFetch(200, { access_token: 'at_1', expires_in: 3600 });
-    expect(await getGCalClient(env, creds)).toEqual({ calendar_id: 'primary', token: 'at_1' });
+    expect(await getGCalToken(env, creds)).toBe('at_1');
   });
 
   // The service-account grant is retired; a blob in that shape must name the fix rather than
@@ -481,6 +481,6 @@ describe('getGCalClient', () => {
     globalThis.fetch = (async () => {
       throw new Error('must not reach Google');
     }) as typeof fetch;
-    await expect(getGCalClient(env, creds)).rejects.toThrow('must reconnect Google Calendar');
+    await expect(getGCalToken(env, creds)).rejects.toThrow('must reconnect Google Calendar');
   });
 });

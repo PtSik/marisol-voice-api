@@ -7,7 +7,7 @@ import {
   canWriteTo,
   gcalListBusy,
   gcalListCalendars,
-  getGCalClient,
+  getGCalToken,
   resolveRouting,
 } from '../../lib/gcal';
 import { canServeCalls } from '../../lib/shop-status';
@@ -406,8 +406,8 @@ async function calendarContext(
     return { error: 'no_connection', status: 400 };
   }
   try {
-    const gcal = await getGCalClient(c.env, shop.integration_credentials_encrypted);
-    return { shop, calendars: await gcalListCalendars(gcal.token), token: gcal.token };
+    const token = await getGCalToken(c.env, shop.integration_credentials_encrypted);
+    return { shop, calendars: await gcalListCalendars(token), token };
   } catch (err) {
     console.error('[gcal-select] calendar list failed:', err instanceof Error ? err.message : err);
     return { error: 'list_failed', status: 502 };

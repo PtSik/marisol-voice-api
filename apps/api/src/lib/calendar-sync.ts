@@ -16,7 +16,7 @@ import {
   gcalGetEvent,
   gcalListDeltas,
   gcalPatchEvent,
-  getGCalClient,
+  getGCalToken,
   resolveRouting,
   writeCalendarFor,
 } from './gcal';
@@ -129,7 +129,7 @@ async function syncShop(
 
   let token: string;
   try {
-    ({ token } = await getGCalClient(env, shop.integration_credentials_encrypted));
+    token = await getGCalToken(env, shop.integration_credentials_encrypted);
   } catch (err) {
     await logGcalFailure(env, shop.id, { op: 'token', message: errorMessage(err) });
     return { applied: 0, repaired: 0 };
