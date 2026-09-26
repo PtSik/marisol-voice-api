@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import { timingSafeEqual } from '../lib/crypto';
 
-export interface ToolSecretBindings {
+interface ToolSecretBindings {
   TOOLS_WEBHOOK_SECRET?: string;
 }
 

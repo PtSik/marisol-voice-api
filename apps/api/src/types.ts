@@ -28,13 +28,6 @@ export interface ConversationInitiationClientData {
   };
 }
 
-export interface ElevenLabsToolWebhookRequest<P = Record<string, unknown>> {
-  tool_call_id: string;
-  tool_name: string;
-  parameters: P;
-  conversation_id: string;
-}
-
 export interface ElevenLabsToolWebhookResponse {
   result: string;
   success: boolean;

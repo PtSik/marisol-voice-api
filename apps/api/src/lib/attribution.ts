@@ -11,7 +11,7 @@ function normalize(value: string): string {
 // Anchored on the start of the title on purpose: matching the name anywhere turns
 // "haircut — Ana Kowalska" (Ana is the customer) into a booking for Ana, and a wrong
 // attribution *frees* a slot, so it errs towards double-booking.
-export function matchesTitlePrefix(title: string, name: string): boolean {
+function matchesTitlePrefix(title: string, name: string): boolean {
   const t = normalize(title);
   const n = normalize(name);
   if (!n || !t.startsWith(n)) return false;

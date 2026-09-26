@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import { timingSafeEqual } from '../lib/crypto';
 
-export interface AdminAuthBindings {
+interface AdminAuthBindings {
   ADMIN_API_KEYS: string;
   ADMIN_IP_ALLOWLIST?: string;
 }

@@ -3,8 +3,8 @@ import { sendDiscordAlert } from './discord';
 import { CALLABLE_STATUSES, canServeCalls } from './shop-status';
 import { getSupabase } from './supabase';
 
-export type GcalFailureOp = 'busy' | 'write' | 'token' | 'sync';
-export type GcalFailureKind = 'auth' | 'transient';
+type GcalFailureOp = 'busy' | 'write' | 'token' | 'sync';
+type GcalFailureKind = 'auth' | 'transient';
 
 export interface GcalFailure {
   op: GcalFailureOp;
@@ -67,7 +67,7 @@ interface FailureRow {
   shops: { name: string; status?: string } | null;
 }
 
-export interface CalendarAlert {
+interface CalendarAlert {
   shopId: string;
   body: string;
 }

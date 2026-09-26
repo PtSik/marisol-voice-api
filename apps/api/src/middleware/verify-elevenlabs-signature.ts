@@ -1,7 +1,7 @@
 import type { MiddlewareHandler } from 'hono';
 import { hmacSHA256, timingSafeEqual } from '../lib/crypto';
 
-export interface ElevenLabsSignatureBindings {
+interface ElevenLabsSignatureBindings {
   ELEVENLABS_WEBHOOK_SECRET: string;
 }
 
