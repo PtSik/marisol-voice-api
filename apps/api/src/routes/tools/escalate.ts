@@ -13,9 +13,8 @@ export async function handleEscalate(
   const { params, shop, conversationId } = req;
   const { reason, escalation_type, customer_phone } = params;
 
-  // A demo has nobody behind it. Transferring hands the caller `escalation_phone` — ours, on a pool
-  // number renamed to answer as their own salon — and a callback texts us to ring a prospect who was
-  // only testing the agent. The DEMO agents are also configured without this tool and told so by the
+  // A demo has nobody behind it. Transferring hands the caller `escalation_phone` — ours — and a
+  // callback texts us to ring someone who was only testing the agent. The DEMO agents are also configured without this tool and told so by the
   // prompt overlay, but both of those are dashboard state that a stray click can undo; this is the
   // copy that ships with the worker.
   //
@@ -50,15 +49,17 @@ export async function handleEscalate(
       });
     }
 
-    const db = req.db;
-    const normalizedPhone = customer_phone ? (tryToE164(customer_phone) ?? customer_phone) : '';
-    const normalizedOwner = tryToE164(shop.owner_escalation_phone);
-    if (!normalizedOwner) {
-      return c.json<ElevenLabsToolWebhookResponse>({
+    const callbackFailed = () =>
+      c.json<ElevenLabsToolWebhookResponse>({
         result: `I couldn't schedule a callback right now. I can transfer you to ${shop.name} instead if you'd like.`,
         success: true,
         data: { escalated: false, escalation_type: 'callback', callback_available: false },
       });
+    const db = req.db;
+    const normalizedPhone = customer_phone ? (tryToE164(customer_phone) ?? customer_phone) : '';
+    const normalizedOwner = tryToE164(shop.owner_escalation_phone);
+    if (!normalizedOwner) {
+      return callbackFailed();
     }
     const { data: callback, error } = await db
       .from('callbacks')
@@ -71,11 +72,7 @@ export async function handleEscalate(
       .select('id')
       .single();
     if (error || !callback) {
-      return c.json<ElevenLabsToolWebhookResponse>({
-        result: `I couldn't schedule a callback right now. I can transfer you to ${shop.name} instead if you'd like.`,
-        success: true,
-        data: { escalated: false, escalation_type: 'callback', callback_available: false },
-      });
+      return callbackFailed();
     }
 
     const notified = await sendSms(
@@ -89,11 +86,7 @@ export async function handleEscalate(
       // This SMS is the table's only consumer during assisted launch, so a row nobody will read
       // must not outlive the answer the caller just got.
       await db.from('callbacks').delete().eq('id', callback.id);
-      return c.json<ElevenLabsToolWebhookResponse>({
-        result: `I couldn't schedule a callback right now. I can transfer you to ${shop.name} instead if you'd like.`,
-        success: true,
-        data: { escalated: false, escalation_type: 'callback', callback_available: false },
-      });
+      return callbackFailed();
     }
 
     return c.json<ElevenLabsToolWebhookResponse>({
@@ -117,7 +110,6 @@ export async function handleEscalate(
     data: {
       escalated: true,
       escalation_type: 'transfer',
-      message: `Transferring you to ${shop.name} now. Please hold.`,
       transfer_to: transferTo,
     },
   });
