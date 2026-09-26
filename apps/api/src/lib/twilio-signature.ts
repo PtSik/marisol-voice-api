@@ -1,3 +1,4 @@
+import { timingSafeEqual } from './crypto';
 export async function validateTwilioSignature(
   authToken: string,
   url: string,
@@ -19,7 +20,7 @@ export async function validateTwilioSignature(
   );
   const digest = await crypto.subtle.sign('HMAC', key, encoder.encode(message));
   const expected = btoa(String.fromCharCode(...new Uint8Array(digest)));
-  return signature === expected;
+  return timingSafeEqual(signature, expected);
 }
 
 export async function readSignedTwilioForm(
