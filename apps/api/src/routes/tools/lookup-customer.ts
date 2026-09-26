@@ -29,23 +29,23 @@ export async function handleLookupCustomer(
     });
   }
 
-  const { data: bookings } = await db
+  const { data: bookings, error } = await db
     .from('bookings')
     .select('id, start_at, end_at, service, staff, status, customer_name')
     .eq('shop_id', shop.id)
     .eq('customer_phone', normalized)
     .order('start_at', { ascending: false });
 
-  if (!bookings || bookings.length === 0) {
+  // Spoken as "no record", a read failure would treat a returning customer as a stranger.
+  if (error) {
     return c.json<ElevenLabsToolWebhookResponse>({
-      result: 'No customer record found for that phone number.',
-      success: true,
-      data: { found: false },
+      result: 'I can’t look up past visits right now. Carry on without them.',
+      success: false,
     });
   }
 
-  const latest = bookings[0];
-  if (!latest) {
+  const latest = bookings?.[0];
+  if (!bookings || !latest) {
     return c.json<ElevenLabsToolWebhookResponse>({
       result: 'No customer record found for that phone number.',
       success: true,

@@ -281,3 +281,76 @@ describe('tool requests — conversation id and parsing', () => {
     expect(parsedBody).toBe(1);
   });
 });
+
+describe('tool requests — a failed write or read is never spoken as success', () => {
+  const BOOKING = {
+    id: 'bk_9',
+    shop_id: SHOP.id,
+    customer_phone: '+13055559999',
+    staff: 'Ana',
+    start_at: nextWeekAt10(),
+    status: 'confirmed',
+    gcal_event_id: null,
+    gcal_calendar_id: null,
+    language: 'en',
+    sms_consent_at: null,
+  };
+
+  // Layered over the stand-in above: `fail` decides which requests the database refuses.
+  function failWhen(fail: (method: string, path: string) => boolean) {
+    const base = globalThis.fetch;
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = new URL(String(input instanceof Request ? input.url : input));
+      const method = (input instanceof Request ? input.method : init?.method) ?? 'GET';
+      const json = (value: unknown, status = 200) =>
+        new Response(JSON.stringify(value), {
+          status,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      if (fail(method, url.pathname)) {
+        calls.push({ method, path: url.pathname, body: undefined });
+        return json({ code: 'XX000', message: 'db down' }, 500);
+      }
+      if (url.pathname === '/rest/v1/bookings' && method === 'GET') {
+        calls.push({ method, path: url.pathname, body: undefined });
+        return json(BOOKING);
+      }
+      if (url.pathname === '/rest/v1/verification_codes' && method === 'PATCH') {
+        const body = typeof init?.body === 'string' ? init.body : undefined;
+        calls.push({ method, path: url.pathname, body });
+        return json([{ id: 'vc_1' }]);
+      }
+      return base(input, init);
+    }) as typeof fetch;
+  }
+
+  it('refuses a cancel whose write failed, and hands the code back', async () => {
+    failWhen((method, path) => method === 'PATCH' && path === '/rest/v1/bookings');
+    const res = await tool('cancel_appointment', {
+      called_number: SHOP.twilio_number,
+      booking_id: BOOKING.id,
+      code: '123456',
+    });
+
+    expect(res.body.success).toBe(false);
+    expect(res.body.result).not.toContain('has been cancelled');
+    const released = calls.find(
+      (call) =>
+        call.method === 'PATCH' &&
+        call.path === '/rest/v1/verification_codes' &&
+        call.body?.includes('"used_at":null'),
+    );
+    expect(released).toBeDefined();
+  });
+
+  it('does not tell a returning caller they are new when the read failed', async () => {
+    failWhen((method, path) => method === 'GET' && path === '/rest/v1/bookings');
+    const res = await tool('lookup_customer', {
+      called_number: SHOP.twilio_number,
+      phone_number: '+13055559999',
+    });
+
+    expect(res.body.success).toBe(false);
+    expect(res.body.result).not.toContain('No customer record');
+  });
+});
