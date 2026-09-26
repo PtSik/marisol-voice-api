@@ -229,3 +229,19 @@ export function validateBookingTime(
   }
   return { ok: true };
 }
+
+// Spoken when validateBookingTime refuses a booking or a move.
+export function bookingTimeError(reason: BookingTimeReason, staffName: string): string {
+  switch (reason) {
+    case 'past':
+      return 'That time has already passed. Let me find the next opening for you.';
+    case 'closed':
+      return "We're closed that day. Could we pick another day?";
+    case 'outside_hours':
+      return "That's outside our opening hours. Let's pick a time while we're open.";
+    case 'staff_away':
+      return `${staffName} isn't working then. I can look at another time or someone else.`;
+    default:
+      return "That doesn't look like a valid time. Let's pick one of the available slots.";
+  }
+}

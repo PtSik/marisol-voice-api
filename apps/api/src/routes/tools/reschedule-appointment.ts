@@ -6,7 +6,7 @@ import {
   resolveRouting,
   writeCalendarFor,
 } from '../../lib/gcal';
-import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
+import { bookingTimeError, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { serviceDuration } from '../../lib/service-catalog';
 import { sendSms } from '../../lib/sms';
 import {
@@ -15,7 +15,7 @@ import {
   smsWhenLabel,
   spokenCode,
 } from '../../lib/sms-templates';
-import { findInRoster, parseStaff } from '../../lib/staff';
+import { resolveStaffForBooking } from '../../lib/staff';
 import { generateCode, releaseCode, storeCode, verifyCode } from '../../lib/verification';
 import type {
   ElevenLabsToolWebhookResponse,
@@ -70,23 +70,18 @@ export async function handleRescheduleAppointment(
     Math.round((new Date(booking.end_at).getTime() - new Date(booking.start_at).getTime()) / 60000);
 
   const requestedStaff = new_staff_name ?? booking.staff;
-  const roster = parseStaff(shop.staff_json);
-  const member = findInRoster(roster, requestedStaff);
-  if (!member && roster.length > 0)
+  const resolved = resolveStaffForBooking(shop.staff_json, requestedStaff);
+  if ('unknown' in resolved)
     return c.json<ElevenLabsToolWebhookResponse>({
       success: false,
-      result: 'Please choose an existing team member.',
+      result: `I don't have anyone by that name. We have ${resolved.unknown.join(', ')} — who would you like?`,
     });
+  const { member, roster } = resolved;
   const staff = member?.name ?? requestedStaff;
-  const validation = validateBookingTime(
-    shop,
-    new_start_time,
-    durationMinutes,
-    findInRoster(roster, staff),
-  );
+  const validation = validateBookingTime(shop, new_start_time, durationMinutes, member);
   if (!validation.ok) {
     return c.json<ElevenLabsToolWebhookResponse>({
-      result: rescheduleTimeError(validation.reason, staff),
+      result: bookingTimeError(validation.reason, staff),
       success: false,
     });
   }
@@ -226,19 +221,4 @@ export async function handleRescheduleAppointment(
       sms_sent: smsSent,
     },
   });
-}
-
-function rescheduleTimeError(reason: BookingTimeReason, staffName: string): string {
-  switch (reason) {
-    case 'past':
-      return 'That new time has already passed. Please pick a later time.';
-    case 'closed':
-      return "We're closed that day. Could we pick another day?";
-    case 'outside_hours':
-      return "That's outside our opening hours. Let's pick a time while we're open.";
-    case 'staff_away':
-      return `${staffName} isn't working then. I can look at another time or someone else.`;
-    default:
-      return "That doesn't look like a valid time. Let's pick an available slot.";
-  }
 }
