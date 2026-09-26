@@ -1,20 +1,20 @@
 import { describe, expect, it } from 'bun:test';
-import { toE164 } from '../../lib/normalize';
+import { tryToE164 } from '../../lib/normalize';
 
-describe('normalize — toE164', () => {
-  it('converts US formatted number to E.164', () => {
-    expect(toE164('(415) 555-2671', 'US')).toBe('+14155552671');
+describe('normalize — tryToE164', () => {
+  it('reads a US number written without a country code', () => {
+    expect(tryToE164('(415) 555-2671')).toBe('+14155552671');
   });
 
-  it('converts international number to E.164', () => {
-    expect(toE164('+44 20 7123 4567', 'GB')).toBe('+442071234567');
+  it('keeps an international number on its own country code', () => {
+    expect(tryToE164('+44 20 7123 4567')).toBe('+442071234567');
   });
 
-  it('returns already-E.164 number unchanged', () => {
-    expect(toE164('+14155552671', 'US')).toBe('+14155552671');
+  it('leaves an E.164 number unchanged', () => {
+    expect(tryToE164('+14155552671')).toBe('+14155552671');
   });
 
-  it('throws on invalid number', () => {
-    expect(() => toE164('not-a-phone', 'US')).toThrow();
+  it('answers null for something that is not a phone number', () => {
+    expect(tryToE164('not-a-phone')).toBeNull();
   });
 });

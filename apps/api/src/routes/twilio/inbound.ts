@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { registerCall } from '../../lib/elevenlabs';
-import { toE164 } from '../../lib/normalize';
+import { tryToE164 } from '../../lib/normalize';
 import { canServeCalls } from '../../lib/shop-status';
 import { getSupabase } from '../../lib/supabase';
 import { readSignedTwilioForm } from '../../lib/twilio-signature';
@@ -27,12 +27,8 @@ export async function handleTwilioInbound(
     return c.text('Bad Request', 400);
   }
 
-  let normalizedTo: string;
-  try {
-    normalizedTo = toE164(toNumber);
-  } catch {
-    return c.text('Bad Request: invalid To number', 400);
-  }
+  const normalizedTo = tryToE164(toNumber);
+  if (!normalizedTo) return c.text('Bad Request: invalid To number', 400);
 
   const db = getSupabase(c.env);
   const { data: shop, error } = await db
