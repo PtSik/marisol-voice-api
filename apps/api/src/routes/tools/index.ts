@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { tryToE164 } from '../../lib/normalize';
+import { readJson } from '../../lib/request';
 import { canServeCalls } from '../../lib/shop-status';
 import { getSupabase } from '../../lib/supabase';
 import { verifyToolSecret } from '../../middleware/verify-tool-secret';
@@ -24,18 +25,6 @@ interface ToolIdentifiers {
   conversationId: string;
 }
 
-// A malformed body is not an error here: it resolves no shop, and the wrapper answers 404 in
-// tool shape rather than letting a parse throw reach the caller as dead air.
-export async function readToolBody(
-  c: Context<{ Bindings: WorkerBindings }>,
-): Promise<Record<string, unknown>> {
-  try {
-    return await c.req.json<Record<string, unknown>>();
-  } catch {
-    return {};
-  }
-}
-
 // ElevenLabs substitutes dynamic variables in the tool BODY (not headers), and may send
 // the LLM params either flat or nested under `parameters`. Read identifiers from both.
 export function readIdentifiers(raw: Record<string, unknown>): ToolIdentifiers {
@@ -46,12 +35,6 @@ export function readIdentifiers(raw: Record<string, unknown>): ToolIdentifiers {
     calledNumber: pick('called_number'),
     conversationId: pick('conversation_id'),
   };
-}
-
-export function hasPhoneContext(raw: unknown): boolean {
-  const body = (raw ?? {}) as Record<string, unknown>;
-  const nested = (body.parameters as Record<string, unknown> | undefined) ?? {};
-  return !!cleanVar((body.called_number ?? nested.called_number) as string | undefined);
 }
 
 export async function resolveShopFrom(
@@ -97,9 +80,6 @@ export async function resolveShopFrom(
 // One parse, one Supabase client and one shop lookup per tool request. Handlers take this
 // instead of re-reading the body: Hono re-runs JSON.parse on every `c.req.json()`.
 export interface ToolRequest<P> {
-  // The body as received. `hasPhone` and `conversationId` are the only things read from it
-  // today, but unwrapping `parameters` loses fields a supported request puts outside them.
-  raw: Record<string, unknown>;
   params: P;
   shop: ShopRow;
   db: ReturnType<typeof getSupabase>;
@@ -117,20 +97,22 @@ type ToolHandler<P> = (
 
 function toolRoute<P>(handler: ToolHandler<P>) {
   return async (c: Context<{ Bindings: WorkerBindings }>) => {
-    const raw = await readToolBody(c);
+    // A malformed body is not an error here: it resolves no shop, and the 404 below answers in
+    // tool shape rather than letting a parse throw reach the caller as dead air.
+    const raw = (await readJson(c)) ?? {};
+    const ids = readIdentifiers(raw);
     const db = getSupabase(c.env);
-    const shop = await resolveShopFrom(db, readIdentifiers(raw));
+    const shop = await resolveShopFrom(db, ids);
     if (!shop)
       return c.json(
         { result: 'Unknown conversation or shop not configured.', success: false },
         404,
       );
     return handler(c, {
-      raw,
       params: ('parameters' in raw ? raw.parameters : raw) as P,
       shop,
       db,
-      hasPhone: hasPhoneContext(raw),
+      hasPhone: !!ids.calledNumber,
       conversationId:
         c.req.header('X-Conversation-Id') ??
         (('conversation_id' in raw ? raw.conversation_id : '') as string) ??
