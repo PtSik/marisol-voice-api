@@ -1,9 +1,9 @@
 import type { ShopRow } from '../types';
 import type { StaffMember } from './staff';
 
-const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+export const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
-export function dayIndexFromName(token: string): number {
+function dayIndexFromName(token: string): number {
   const t = token.trim().toLowerCase();
   return DAY_NAMES.findIndex((d) => d.toLowerCase() === t);
 }
@@ -21,7 +21,7 @@ export function isValidHoursKey(key: string): boolean {
   return parts.every((part) => dayIndexFromName(part) >= 0);
 }
 
-export function keyMatchesDay(key: string, dayIndex: number): boolean {
+function keyMatchesDay(key: string, dayIndex: number): boolean {
   const [firstDay, lastDay] = key.split('-');
   if (!firstDay) return false;
   const from = dayIndexFromName(firstDay);
@@ -101,9 +101,11 @@ export function getHoursForDate(
   }
 
   if (typeof parsed !== 'object' || !parsed || Array.isArray(parsed)) return null;
+  return hoursForDayIndex(parsed as Record<string, unknown>, dayIndexOf(dateStr));
+}
 
-  const dayIndex = new Date(`${dateStr}T12:00:00Z`).getUTCDay();
-  return hoursForDayIndex(parsed as Record<string, unknown>, dayIndex);
+function dayIndexOf(dateStr: string): number {
+  return new Date(`${dateStr}T12:00:00Z`).getUTCDay();
 }
 
 // A staff member's own hours narrow the shop's, never widen them. No own hours means
@@ -115,7 +117,7 @@ export function getStaffHoursForDate(
 ): { open: number; close: number } | null {
   const shopHours = getHoursForDate(shop.hours_json, dateStr);
   if (!shopHours || !member?.hours) return shopHours;
-  const own = getHoursForDate(JSON.stringify(member.hours), dateStr);
+  const own = hoursForDayIndex(member.hours, dayIndexOf(dateStr));
   if (!own) return null;
   const open = Math.max(shopHours.open, own.open);
   const close = Math.min(shopHours.close, own.close);
@@ -221,8 +223,9 @@ export function validateBookingTime(
     return { ok: false, reason: 'outside_hours' };
   }
 
+  // Already inside the shop's hours, so the member's own are the only narrower bound left.
   if (member?.hours) {
-    const own = getStaffHoursForDate(shop, member, dateStr);
+    const own = hoursForDayIndex(member.hours, dayIndexOf(dateStr));
     if (!own || localMin < own.open || localMin + durationMin > own.close) {
       return { ok: false, reason: 'staff_away' };
     }

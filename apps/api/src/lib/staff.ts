@@ -1,4 +1,4 @@
-import { hoursForDayIndex } from './hours';
+import { DAY_NAMES, hoursForDayIndex } from './hours';
 
 export interface StaffMember {
   id: string;
@@ -43,19 +43,11 @@ export function parseStaff(staffJson: string): StaffMember[] {
   const taken = new Set<string>();
   const members: StaffMember[] = [];
   for (const entry of parsed) {
-    let name: string;
-    let id: string | undefined;
-    let hours: Record<string, string> | undefined;
-
-    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
-      const e = entry as Record<string, unknown>;
-      name = typeof e.name === 'string' ? e.name.trim() : '';
-      id = typeof e.id === 'string' && e.id.trim() ? e.id.trim() : undefined;
-      hours = parseHours(e.hours);
-    } else {
-      continue;
-    }
-
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const e = entry as Record<string, unknown>;
+    const name = typeof e.name === 'string' ? e.name.trim() : '';
+    const id = typeof e.id === 'string' && e.id.trim() ? e.id.trim() : undefined;
+    const hours = parseHours(e.hours);
     if (!name) continue;
     const finalId = id && !taken.has(id) ? id : slugId(name, taken);
     taken.add(finalId);
@@ -98,8 +90,6 @@ export function resolveStaffForBooking(
   return { member, roster };
 }
 
-const DAY_ABBR = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-
 // Names only — the agent must never see staff ids. Members with their own schedule carry
 // a short note so the agent doesn't offer someone who isn't in that day.
 export function staffSummary(staff: StaffMember[]): string {
@@ -109,7 +99,7 @@ export function staffSummary(staff: StaffMember[]): string {
       if (!hours) return m.name;
       // Resolved exactly as the booking guard resolves it — a summary that offers a day the
       // guard then refuses sends the caller through a booking that cannot complete.
-      const days = DAY_ABBR.filter((_, i) => hoursForDayIndex(hours, i) !== null);
+      const days = DAY_NAMES.filter((_, i) => hoursForDayIndex(hours, i) !== null);
       return days.length > 0 ? `${m.name} (works ${days.join(', ')})` : m.name;
     })
     .join(', ');
