@@ -1,7 +1,11 @@
 import type { Context } from 'hono';
-import { logGcalFailure } from '../../lib/calendar-alerts';
 import { checkCalendarConflict } from '../../lib/calendar-guard';
-import { gcalPatchEvent, getGCalClient, resolveRouting, writeCalendarFor } from '../../lib/gcal';
+import {
+  deferCalendarWrite,
+  gcalPatchEvent,
+  resolveRouting,
+  writeCalendarFor,
+} from '../../lib/gcal';
 import { type BookingTimeReason, spokenDateTimeLabel, validateBookingTime } from '../../lib/hours';
 import { serviceDuration } from '../../lib/service-catalog';
 import { sendSms } from '../../lib/sms';
@@ -168,33 +172,20 @@ export async function handleRescheduleAppointment(
     const encryptedCreds = shop.integration_credentials_encrypted;
     const eventId = booking.gcal_event_id;
     const calendarId = booking.gcal_calendar_id ?? resolveRouting(shop).write_calendar_id;
-    c.executionCtx.waitUntil(
-      (async () => {
-        try {
-          const gcal = await getGCalClient(c.env, encryptedCreds);
-          await gcalPatchEvent(
-            calendarId,
-            gcal.token,
-            eventId,
-            new_start_time,
-            newEndAt,
-            shop.timezone,
-          );
-          // Guarded on status: a cancel landing mid-flight re-raises the flag for the
-          // repair cron, and this clear must not race it back down.
-          await db
-            .from('bookings')
-            .update({ gcal_sync_pending: false })
-            .eq('id', booking_id)
-            .eq('status', 'confirmed');
-        } catch (err) {
-          await logGcalFailure(c.env, shop.id, {
-            op: 'write',
-            calendar_id: calendarId,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      })(),
+    deferCalendarWrite(
+      c.executionCtx,
+      c.env,
+      { shopId: shop.id, encryptedCreds, calendarId },
+      async (token) => {
+        await gcalPatchEvent(calendarId, token, eventId, new_start_time, newEndAt, shop.timezone);
+        // Guarded on status: a cancel landing mid-flight re-raises the flag for the
+        // repair cron, and this clear must not race it back down.
+        await db
+          .from('bookings')
+          .update({ gcal_sync_pending: false })
+          .eq('id', booking_id)
+          .eq('status', 'confirmed');
+      },
     );
   }
 

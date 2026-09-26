@@ -1,12 +1,11 @@
 import type { Context } from 'hono';
-import { logGcalFailure } from '../../lib/calendar-alerts';
 import { checkCalendarConflict } from '../../lib/calendar-guard';
 import {
   CALENDAR_SETUP_INCOMPLETE_RESULT,
   calendarSetupIncomplete,
+  deferCalendarWrite,
   deterministicEventId,
   gcalCreateEvent,
-  getGCalClient,
   writeCalendarFor,
 } from '../../lib/gcal';
 import {
@@ -171,42 +170,34 @@ export async function handleBookAppointment(
   if (shop.integration === 'google_calendar' && shop.integration_credentials_encrypted) {
     const encryptedCreds = shop.integration_credentials_encrypted;
     const calendarId = writeCalendarFor(shop, member?.id);
-    c.executionCtx.waitUntil(
-      (async () => {
-        try {
-          const gcal = await getGCalClient(c.env, encryptedCreds);
-          const gcalEventId = await gcalCreateEvent(
-            calendarId,
-            gcal.token,
-            `${service ?? 'Appointment'} — ${customer_name ?? normalizedPhone} (${member?.name ?? staff_name})`,
-            `Phone: ${normalizedPhone}\nService: ${service ?? 'N/A'}`,
-            start_time,
-            endAt,
-            shop.timezone,
-            booking.id,
-            deterministicEventId(booking.id),
-          );
-          // Guarded on status: a cancel landing mid-flight re-raises the flag, and clearing
-          // it here would strand the just-created event with nothing left to repair it.
-          await db
-            .from('bookings')
-            .update({
-              gcal_event_id: gcalEventId,
-              gcal_calendar_id: calendarId,
-              gcal_sync_pending: false,
-            })
-            .eq('id', booking.id)
-            .eq('status', 'confirmed');
-        } catch (err) {
-          // Non-fatal — the booking already succeeded — but silent failure here means the
-          // shop's calendar quietly stops matching reality, so it has to be visible.
-          await logGcalFailure(c.env, shop.id, {
-            op: 'write',
-            calendar_id: calendarId,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      })(),
+    deferCalendarWrite(
+      c.executionCtx,
+      c.env,
+      { shopId: shop.id, encryptedCreds, calendarId },
+      async (token) => {
+        const gcalEventId = await gcalCreateEvent(
+          calendarId,
+          token,
+          `${service ?? 'Appointment'} — ${customer_name ?? normalizedPhone} (${member?.name ?? staff_name})`,
+          `Phone: ${normalizedPhone}\nService: ${service ?? 'N/A'}`,
+          start_time,
+          endAt,
+          shop.timezone,
+          booking.id,
+          deterministicEventId(booking.id),
+        );
+        // Guarded on status: a cancel landing mid-flight re-raises the flag, and clearing
+        // it here would strand the just-created event with nothing left to repair it.
+        await db
+          .from('bookings')
+          .update({
+            gcal_event_id: gcalEventId,
+            gcal_calendar_id: calendarId,
+            gcal_sync_pending: false,
+          })
+          .eq('id', booking.id)
+          .eq('status', 'confirmed');
+      },
     );
   }
 

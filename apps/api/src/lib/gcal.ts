@@ -520,8 +520,33 @@ async function readStaffBusy(
   return busy;
 }
 
-function errorMessage(err: unknown): string {
+export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// Calendar writes never keep a caller waiting: they run after the response, and the caller has
+// already raised gcal_sync_pending so the repair cron finishes one that fails here. A failure is
+// non-fatal but logged — silence would let the shop's calendar quietly stop matching reality.
+export function deferCalendarWrite(
+  ctx: { waitUntil(promise: Promise<unknown>): void },
+  env: WorkerBindings,
+  target: { shopId: string; encryptedCreds: string; calendarId: string },
+  write: (token: string) => Promise<void>,
+): void {
+  ctx.waitUntil(
+    (async () => {
+      try {
+        const { token } = await getGCalClient(env, target.encryptedCreds);
+        await write(token);
+      } catch (err) {
+        await logGcalFailure(env, target.shopId, {
+          op: 'write',
+          calendar_id: target.calendarId,
+          message: errorMessage(err),
+        });
+      }
+    })(),
+  );
 }
 
 function reportFailure(

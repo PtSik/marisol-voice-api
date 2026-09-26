@@ -10,6 +10,7 @@ import {
   type GCalDeltaEvent,
   GCalHttpError,
   deterministicEventId,
+  errorMessage,
   gcalCreateEvent,
   gcalDeleteEvent,
   gcalGetEvent,
@@ -533,8 +534,4 @@ async function clearPending(
     .from('bookings')
     .update({ ...extra, gcal_sync_pending: false })
     .eq('id', bookingId);
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }

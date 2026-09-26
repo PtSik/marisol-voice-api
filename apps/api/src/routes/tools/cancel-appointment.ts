@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
-import { logGcalFailure } from '../../lib/calendar-alerts';
-import { gcalDeleteEvent, getGCalClient, resolveRouting } from '../../lib/gcal';
+import { deferCalendarWrite, gcalDeleteEvent, resolveRouting } from '../../lib/gcal';
 import { spokenDateTimeLabel } from '../../lib/hours';
 import { sendSms } from '../../lib/sms';
 import { cancellationSms, normalizeSmsLanguage, smsWhenLabel } from '../../lib/sms-templates';
@@ -79,23 +78,17 @@ export async function handleCancelAppointment(
     const eventId = booking.gcal_event_id;
     // The calendar recorded on the booking wins: the mapping may have changed since.
     const calendarId = booking.gcal_calendar_id ?? resolveRouting(shop).write_calendar_id;
-    c.executionCtx.waitUntil(
-      (async () => {
-        try {
-          const gcal = await getGCalClient(c.env, encryptedCreds);
-          await gcalDeleteEvent(calendarId, gcal.token, eventId);
-          await db
-            .from('bookings')
-            .update({ gcal_event_id: null, gcal_sync_pending: false })
-            .eq('id', booking_id);
-        } catch (err) {
-          await logGcalFailure(c.env, shop.id, {
-            op: 'write',
-            calendar_id: calendarId,
-            message: err instanceof Error ? err.message : String(err),
-          });
-        }
-      })(),
+    deferCalendarWrite(
+      c.executionCtx,
+      c.env,
+      { shopId: shop.id, encryptedCreds, calendarId },
+      async (token) => {
+        await gcalDeleteEvent(calendarId, token, eventId);
+        await db
+          .from('bookings')
+          .update({ gcal_event_id: null, gcal_sync_pending: false })
+          .eq('id', booking_id);
+      },
     );
   }
 
