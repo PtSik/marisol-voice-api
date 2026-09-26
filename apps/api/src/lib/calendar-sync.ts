@@ -447,17 +447,7 @@ async function patchTargetGone(
   const existing = await gcalGetEvent(calendarId, token, eventId);
 
   if (existing?.status === 'cancelled') {
-    // Human cancellation, same as the sync pass reads it: never resurrected, no SMS.
-    await db
-      .from('bookings')
-      .update({
-        status: 'cancelled',
-        cancelled_via: 'calendar',
-        gcal_sync_pending: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', booking.id)
-      .eq('status', 'confirmed');
+    await markCancelledInCalendar(db, booking.id);
     return true;
   }
 
@@ -508,21 +498,32 @@ async function createMissingEvent(
       return true;
     }
     // Create worked and the owner already deleted the event — that's a human cancellation,
-    // not a failure. Never resurrect the event; no SMS.
-    await db
-      .from('bookings')
-      .update({
-        status: 'cancelled',
-        cancelled_via: 'calendar',
-        gcal_event_id: eventId,
-        gcal_calendar_id: calendarId,
-        gcal_sync_pending: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', booking.id)
-      .eq('status', 'confirmed');
+    // not a failure.
+    await markCancelledInCalendar(db, booking.id, {
+      gcal_event_id: eventId,
+      gcal_calendar_id: calendarId,
+    });
     return true;
   }
+}
+
+// Human cancellation, same as the sync pass reads it: never resurrected, no SMS.
+async function markCancelledInCalendar(
+  db: Db,
+  bookingId: string,
+  extra: Record<string, unknown> = {},
+): Promise<void> {
+  await db
+    .from('bookings')
+    .update({
+      ...extra,
+      status: 'cancelled',
+      cancelled_via: 'calendar',
+      gcal_sync_pending: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', bookingId)
+    .eq('status', 'confirmed');
 }
 
 async function clearPending(
