@@ -139,4 +139,23 @@ describe('audit_log writers after the schema contraction', () => {
       payload,
     });
   });
+
+  // supabase-js returns a rejected insert as `error` instead of throwing, so a catch alone never
+  // saw it and the failure was lost without a trace.
+  it('reports a rejected insert instead of losing it', async () => {
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ code: '23502', message: 'null value in column' }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      })) as unknown as typeof fetch;
+    const realError = console.error;
+    const logged: string[] = [];
+    console.error = (...args: unknown[]) => logged.push(args.join(' '));
+    try {
+      await logGcalFailure(env, 'shop_1', { op: 'busy', message: 'timed out' });
+    } finally {
+      console.error = realError;
+    }
+    expect(logged.some((line) => line.includes('null value in column'))).toBe(true);
+  });
 });

@@ -22,39 +22,42 @@ export function classifyFailure(message: string): GcalFailureKind {
 const TRANSIENT_ALERT_THRESHOLD = 3;
 
 // Best-effort: calendar failures are already non-fatal, so logging one must never be the
-// thing that breaks a call.
-export async function logGcalFailure(
+// thing that breaks a call. supabase-js reports a failed insert in `error` rather than throwing.
+async function logAudit(
   env: WorkerBindings,
   shopId: string,
-  failure: GcalFailure,
+  action: string,
+  payload: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await getSupabase(env)
+    const { error } = await getSupabase(env)
       .from('audit_log')
-      .insert({
-        shop_id: shopId,
-        action: 'gcal_failure',
-        payload: { ...failure, kind: classifyFailure(failure.message) },
-      });
+      .insert({ shop_id: shopId, action, payload });
+    if (error) console.error(`[gcal-alert] log failed: ${error.message}`);
   } catch (err) {
     console.error('[gcal-alert] log failed:', err instanceof Error ? err.message : err);
   }
 }
 
+export function logGcalFailure(
+  env: WorkerBindings,
+  shopId: string,
+  failure: GcalFailure,
+): Promise<void> {
+  return logAudit(env, shopId, 'gcal_failure', {
+    ...failure,
+    kind: classifyFailure(failure.message),
+  });
+}
+
 // A calendar-driven move that collides with another booking cannot be applied — calendar
 // and Supabase stay divorced until a human steps in, so it must never be a quiet log line.
-export async function logGcalMoveConflict(
+export function logGcalMoveConflict(
   env: WorkerBindings,
   shopId: string,
   payload: { booking_id: string; calendar_id: string; start_at: string; end_at: string },
 ): Promise<void> {
-  try {
-    await getSupabase(env)
-      .from('audit_log')
-      .insert({ shop_id: shopId, action: 'gcal_move_conflict', payload });
-  } catch (err) {
-    console.error('[gcal-alert] log failed:', err instanceof Error ? err.message : err);
-  }
+  return logAudit(env, shopId, 'gcal_move_conflict', payload);
 }
 
 interface FailureRow {
