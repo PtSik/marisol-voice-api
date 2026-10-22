@@ -4,7 +4,7 @@ AI phone receptionist for barbershops and pet-grooming salons in the US. One sha
 Worker serves every shop — shop context is resolved at runtime from the inbound Twilio number.
 
 The customer-facing half of the product (marketing site, checkout, onboarding wizard, client
-portal, provisioning, admin queue) lives in a separate repo: [`kaijiro-voice-landing`](./kaijiro-voice-landing).
+portal, provisioning, admin queue) lives in a separate repo: [`marisol-web`](https://github.com/PtSik/marisol-web).
 This repo is the **voice worker** plus its Supabase schema.
 
 - **Worker:** `voice-agent-api` → `https://api.callmarisol.com`
@@ -18,7 +18,7 @@ This repo is the **voice worker** plus its Supabase schema.
 | Database | Supabase Postgres via `supabase-js` (HTTP, service-role key, no TCP pool) |
 | Voice AI | ElevenLabs Conversational AI — two template agents (barber, grooming), personalized per call |
 | Telephony | Twilio Voice (inbound) + Twilio SMS (outbound, launch-gated) |
-| Calendar | Google Calendar via self-serve OAuth (hand-rolled RS256 JWT, no `googleapis`) |
+| Calendar | Google Calendar via customer OAuth; service-account JWT support, no `googleapis` |
 | Alerting | Discord incoming webhook |
 | Linter | Biome · **Package manager** bun |
 
@@ -44,25 +44,63 @@ apps/api/src/
                         shop-status, verification, crypto, attribution, calendar-sync,
                         calendar-alerts, reminders, discord, password, normalize, elevenlabs
   __tests__/            bun test — lib / middleware / routes / app
-supabase/migrations/    SQL migrations 0001…0019 (apply with the supabase CLI)
+supabase/migrations/    Versioned SQL migrations (apply with the supabase CLI)
 agent-templates/        ElevenLabs prompt sources + agent config snapshots
-docs/                   PROJECT_SPEC.md (canonical), onboarding.md, diagrams/, research
+docs/                   PROJECT_SPEC.md (canonical), onboarding.md, diagrams/
 ```
 
 ## Local dev
 
+The automated checks use mocked integrations and do not require provider accounts. Install
+Bun and use the committed lockfile. CI pins its Bun version in
+[`.github/workflows/ci.yml`](./.github/workflows/ci.yml).
+
 ```bash
+bun install --frozen-lockfile
 cd apps/api
-bun install            # from the repo root
-bun run dev            # wrangler dev
-bun run typecheck      # tsc --noEmit
-bun run test           # bun test — 295 tests
-bun run lint           # biome check src/
-bun run deploy         # wrangler deploy
+bun run typecheck
+bun run test
+bun run lint
 ```
 
-CI (`.github/workflows/ci.yml`) runs `biome ci`, `typecheck` and `test` on every PR and on
-pushes to `main`. `biome ci` does not write fixes — run `bunx biome check --fix src/` first.
+To run the API locally:
+
+```bash
+cp .env.example .dev.vars
+# Fill .dev.vars with credentials for your own development services.
+bun run dev
+```
+
+The template is [`apps/api/.env.example`](./apps/api/.env.example). Real call and booking flows
+need a separate Supabase database with the migrations applied, Twilio and ElevenLabs accounts,
+and Google Calendar credentials for calendar integration. A local server alone does not simulate
+those services. Keep SMS disabled during setup. Never use production customer data for demos.
+
+CI runs formatting/lint, typechecking and tests on pull requests and pushes to `main`.
+Tests exercise request handlers and business rules with mocks; they do not verify live phone
+calls, provider dashboards or deployed database state.
+
+## Engineering decisions
+
+- **Tenant isolation:** shop resolution uses explicit call context; it does not guess from the
+  most recent call across customers.
+- **Voice-friendly failures:** tool errors retain a spoken `result` and `success` flag so the
+  agent can explain a failure instead of leaving the caller waiting.
+- **Calendar repair:** writes run outside the spoken response path, with pending state and a
+  scheduled repair process for failed synchronization.
+- **Server-enforced demo boundaries:** demo shops cannot transfer a caller to a real person,
+  even if an agent prompt or dashboard configuration changes.
+
+For a code walkthrough, start at [`src/index.ts`](./apps/api/src/index.ts), then
+[`book-appointment.ts`](./apps/api/src/routes/tools/book-appointment.ts),
+[`calendar-sync.ts`](./apps/api/src/lib/calendar-sync.ts) and the
+[request-handler tests](./apps/api/src/__tests__/app/).
+
+## Reviewing the product
+
+The public product site is [callmarisol.com](https://callmarisol.com). The UI, billing and portal
+implementation is in the companion repository. Live calls, checkout and provisioning use
+external services; use the automated tests for a credential-free technical review.
 
 ## Launch gates
 
@@ -74,7 +112,10 @@ Three switches decide what the worker is allowed to do. All of them fail closed:
 | `shops.sms_enabled` | per shop | that shop sends no SMS, and `sms_available` reaches the agent as `"false"` |
 | `bookings.sms_consent_at` | per recipient | customer messages are blocked without consent captured on the call |
 
-Plus `shops.status` (`lib/shop-status.ts`): only `active`, `trial` and `demo` are served — a new
+Plus `shops.status` (`lib/shop-status.ts`): only `active` shops are served — a new
 shop is provisioned `suspended` and released by hand during assisted launch.
 
 See [`docs/PROJECT_SPEC.md`](./docs/PROJECT_SPEC.md) for the full contract.
+
+Tool webhooks also fail closed: missing `TOOLS_WEBHOOK_SECRET` returns 503, and an invalid
+`X-Tool-Secret` returns 401. The template and deployed agent must use matching values.
