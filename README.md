@@ -22,10 +22,16 @@ This repo is the **voice worker** plus its Supabase schema.
 | Alerting | Discord incoming webhook |
 | Linter | Biome · **Package manager** bun |
 
-Diagrams (Mermaid) live in [`docs/diagrams/`](./docs/diagrams/). For how the two repos fit
-together technically — workers, bindings, datastores, third parties — read
-[`docs/diagrams/system.md`](./docs/diagrams/system.md) first;
-[`docs/diagrams/README.md`](./docs/diagrams/README.md) indexes the rest.
+```mermaid
+flowchart LR
+  Phone[Inbound Twilio call] --> Voice[ElevenLabs voice agent]
+  Voice --> API[Hono Worker: tools and webhooks]
+  API --> DB[(Supabase Postgres)]
+  API --> Calendar[Google Calendar]
+  API --> SMS[Twilio SMS: launch-gated]
+  Portal[Marisol web portal] --> Admin[Authenticated admin API]
+  Admin --> API
+```
 
 ## Structure
 
@@ -45,8 +51,6 @@ apps/api/src/
                         calendar-alerts, reminders, discord, password, normalize, elevenlabs
   __tests__/            bun test — lib / middleware / routes / app
 supabase/migrations/    Versioned SQL migrations (apply with the supabase CLI)
-agent-templates/        ElevenLabs prompt sources + agent config snapshots
-docs/                   PROJECT_SPEC.md (canonical), onboarding.md, diagrams/
 ```
 
 ## Local dev
@@ -115,7 +119,7 @@ Three switches decide what the worker is allowed to do. All of them fail closed:
 Plus `shops.status` (`lib/shop-status.ts`): only `active` shops are served — a new
 shop is provisioned `suspended` and released by hand during assisted launch.
 
-See [`docs/PROJECT_SPEC.md`](./docs/PROJECT_SPEC.md) for the full contract.
+The request handlers and their tests define the public code example’s behavior.
 
 Tool webhooks also fail closed: missing `TOOLS_WEBHOOK_SECRET` returns 503, and an invalid
 `X-Tool-Secret` returns 401. The template and deployed agent must use matching values.
